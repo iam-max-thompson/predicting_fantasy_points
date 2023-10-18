@@ -12,6 +12,8 @@ knitr::opts_chunk$set(echo = TRUE)
 ```{r}
 library(tidyverse)
 library(nflverse)
+library(caret)
+library(zoo)
 ```
 
 
@@ -25,16 +27,14 @@ wrs <- d2010_to_2022 %>% filter(position %in% c("TE", "WR")) %>% filter(season_t
 
 wr_by_season <- wrs %>% group_by(player_id, season) %>% summarize(total_pts = sum(fantasy_points_ppr), total_games = n(), points_per_game = total_pts / total_games, total_targets = sum(targets), targets_per_game = total_targets / total_games)
 
-
-
-
 ```
 
 
 ```{r}
 
-new_df <- wr_by_season %>%
-  filter(total_games > 8) %>% 
+MASTER <- wr_by_season %>%
+  # this gets rid of injured players
+ # filter(total_games > 8) %>% 
   arrange(player_id, season) %>%
   group_by(player_id) %>%
   mutate(points_from_last_year = lag(points_per_game),
@@ -43,12 +43,125 @@ new_df <- wr_by_season %>%
          total_games_last_year = lag(total_games)) %>%
   ungroup()
 
-new_df <- new_df %>% filter(!is.na(points_from_last_year))
+MASTER <- data.frame(lapply(MASTER, function(x) ifelse(is.na(x), 0, x)))
+# this gets rid of rookies
+#MASTER <- MASTER %>% filter(!is.na(points_from_last_year))
 
-ggplot(new_df, aes(x = targets_per_game_last_year, y = points_per_game)) + geom_point() + geom_smooth(method = "lm", se = F)
+ggplot(MASTER, aes(x = points_from_last_year, y = points_per_game)) + geom_point() + geom_smooth(method = "lm", se = F)
 
-M <- lm(points_per_game ~ targets_per_game_last_year*points_from_last_year+total_games, data = new_df)
+M <- lm(points_per_game ~ targets_per_game_last_year*points_from_last_year+total_games, data = MASTER)
 summary(M)
+
+```
+
+
+```{r}
+
+#TO CHECK: 00-0024243
+## adding in their team from week 17:
+wr_last_team <- wrs %>% group_by(player_id, season) %>% filter(week == max(week)) %>% mutate(last_team_last_year = recent_team) %>% select(player_id, season, last_team_last_year) %>% arrange(player_id, season)
+
+
+wr_first_team <- wrs %>% group_by(player_id, season) %>% filter(week == min(week)) %>% mutate(starting_team = recent_team) %>% select(player_id, season, starting_team)
+
+wr_last_team$for_season <- wr_last_team$season + 1
+wr_last_team$season <- NULL
+
+wr_team_history <- NULL
+wr_team_history <- left_join(wr_first_team, wr_last_team, by = c("player_id", c("season" = "for_season")))
+
+
+# getting team data
+season_attempts <- d2010_to_2022 %>% filter(season_type == "REG") %>% group_by(season, recent_team) %>% summarize(total_attempts = sum(attempts))
+## delete above if below works
+season_attempts_last_year <- d2010_to_2022 %>%
+  filter(season_type == "REG") %>%
+  group_by(season, recent_team) %>%
+  summarize(total_attempts_ly = sum(attempts)) %>%
+  mutate(season = season + 1)
+
+
+wr_attempt_table <- wr_team_history %>% left_join(season_attempts_last_year, by = c("season", c("starting_team" = "recent_team")))
+
+wr_attempt_table <- wr_attempt_table %>% rename(pass_attempts_new_team = total_attempts_ly)
+
+wr_attempt_table <- wr_attempt_table %>% left_join(season_attempts_last_year, by = c("season", c("last_team_last_year" = "recent_team")))
+
+wr_attempt_table <- wr_attempt_table %>% rename(pass_attempts_old_team = total_attempts_ly) %>% mutate(pass_attempt_difference = pass_attempts_new_team - pass_attempts_old_team)
+
+
+wr_attempt_table$pass_attempt_difference <- ifelse(is.na(wr_attempt_table$pass_attempt_difference), 0, wr_attempt_table$pass_attempt_difference)
+# TODO : add pass attempts difference to MASTER
+MASTER <- wr_attempt_table %>% select(player_id, season, pass_attempt_difference) %>% right_join(MASTER, by = c("player_id", "season"))
+
+
+```
+
+
+```{r}
+# draft pick status:
+draft_history <- load_draft_picks()
+
+# limit to just wr/te in dataset
+draft_history <- draft_history %>% filter(gsis_id %in% wrs$player_id) %>% select(round, pick, gsis_id)
+
+
+MASTER <- MASTER %>% left_join(draft_history, by = c("player_id" = "gsis_id"))
+# filling NA with 300 for undfrafteds
+MASTER <- MASTER %>% mutate(pick = ifelse(is.na(pick), 300, pick))
+
+## testing: fill UDFA with 0 and then inspect:
+ggplot(MASTER, aes(x = pick, y = points_per_game)) + geom_point() + geom_smooth(method = "lm", se = F)
+
+
+ggplot(data = MASTER) +
+  geom_violin(aes(x = ifelse(is.na(pick), "Undrafted", "Got Drafted"), y = points_per_game)) +
+  labs(x = "Pick Availability", y = "Points Per Game") +
+  ggtitle("Boxplot of Points Per Game by Pick Availability")
+```
+
+
+
+```{r}
+# min season
+year_to_remove <- min(MASTER$season)
+MASTER <- MASTER %>% filter(season > year_to_remove)
+# Create an index for the 70/30 train-test split
+trainIndex <- createDataPartition(MASTER$points_per_game, p = 0.7, 
+                                  list = FALSE)
+
+# Split the data into training and testing sets
+trainData <- MASTER[trainIndex, ]
+testData <- MASTER[-trainIndex, ]
+
+# Create a train control object for 5-fold cross-validation
+ctrl <- trainControl(method = "cv", number = 5)
+
+# Fit a random forest model
+model <- train(points_per_game ~ points_from_last_year + total_games_last_year + pick + pass_attempt_difference, data = trainData, 
+               method = "rf", trControl = ctrl)
+
+# Make predictions on the test set
+predictions <- predict(model, newdata = testData)
+
+# Evaluate the model's performance
+results <- postResample(predictions, testData$points_per_game)
+
+
+testData$predicted <- predictions
+
+ggplot(testData, aes(predicted, points_per_game)) + geom_point(color = "blue") + geom_abline(intercept = 0, slope = 1, color = "red", linewidth = 1.5) + labs(title = "predicted PPG vs Actual\nred line is PERFECT prediction", y = "actual PPG", x = "PREDICTED PPG")
+
+print(results)
+
+```
+
+```{r}
+# QUICK: print the long career ppl
+print(wr_by_season %>% group_by(player_id) %>% summarize(c = n()) %>% arrange(desc(c)))
+
+# how many unique pass catchers do we have??
+distinct_player_count <- wrs %>% distinct(player_id) %>% nrow()
 
 ```
 
