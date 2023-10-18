@@ -1,0 +1,54 @@
+---
+title: "wr_predictions"
+output: html_document
+date: "2023-10-18"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(tidyverse)
+library(nflverse)
+```
+
+
+```{r}
+d2010_to_2022 <- load_player_stats(c(2010:2022))
+d2010_to_2022$position <- factor(d2010_to_2022$position)
+d2010_to_2022$season_type <- factor(d2010_to_2022$season_type)
+
+
+wrs <- d2010_to_2022 %>% filter(position %in% c("TE", "WR")) %>% filter(season_type == "REG") %>% select(player_id, player_name, recent_team, season, week, receptions, targets, receiving_yards, receiving_tds, receiving_fumbles_lost, receiving_air_yards, receiving_yards_after_catch, target_share, fantasy_points_ppr)
+
+wr_by_season <- wrs %>% group_by(player_id, season) %>% summarize(total_pts = sum(fantasy_points_ppr), total_games = n(), points_per_game = total_pts / total_games, total_targets = sum(targets), targets_per_game = total_targets / total_games)
+
+
+
+
+```
+
+
+```{r}
+
+new_df <- wr_by_season %>%
+  filter(total_games > 8) %>% 
+  arrange(player_id, season) %>%
+  group_by(player_id) %>%
+  mutate(points_from_last_year = lag(points_per_game),
+         targets_from_last_year = lag(total_targets),
+         targets_per_game_last_year = lag(targets_per_game),
+         total_games_last_year = lag(total_games)) %>%
+  ungroup()
+
+new_df <- new_df %>% filter(!is.na(points_from_last_year))
+
+ggplot(new_df, aes(x = targets_per_game_last_year, y = points_per_game)) + geom_point() + geom_smooth(method = "lm", se = F)
+
+M <- lm(points_per_game ~ targets_per_game_last_year*points_from_last_year+total_games, data = new_df)
+summary(M)
+
+```
+
