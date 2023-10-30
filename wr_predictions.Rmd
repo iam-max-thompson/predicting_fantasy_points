@@ -19,7 +19,7 @@ library(DALEX)
 library(visdat)
 library("rvest")
 library("xml2")
-setwd("/Users/max")
+setwd("/Users/max/Desktop/predicting_fantasy_points")
 ```
 
 
@@ -145,7 +145,7 @@ MASTER <- wr_attempt_table %>% select(player_id, season, pass_attempt_difference
 draft_history <- load_draft_picks() %>% filter(position %in% c("WR", "TE"))
 
 # read in draft info fix
-gsis <- read_csv("Downloads/draftinfo_gsis_fix.csv")
+gsis <- read_csv("draftinfo_gsis_fix.csv")
 
 names(gsis)
 
@@ -523,7 +523,7 @@ rmse_testing_0
 
 ```{r}
 # COMPARING TO MIKE CLAY:
-espn_2023 <- read_csv("Downloads/espn_2023.csv")
+espn_2023 <- read_csv("espn_2023.csv")
 
 d2023_predictions <- predict(model, newdata = d2023)
 
