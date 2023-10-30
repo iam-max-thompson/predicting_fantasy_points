@@ -12,6 +12,14 @@ knitr::opts_chunk$set(echo = TRUE)
 ```{r}
 library(tidyverse)
 library(nflverse)
+library(caret)
+library(zoo)
+library(plotly)
+library(DALEX)
+library(visdat)
+library("rvest")
+library("xml2")
+setwd("/Users/max")
 ```
 
 
@@ -21,34 +29,614 @@ d2010_to_2022$position <- factor(d2010_to_2022$position)
 d2010_to_2022$season_type <- factor(d2010_to_2022$season_type)
 
 
-wrs <- d2010_to_2022 %>% filter(position %in% c("TE", "WR")) %>% filter(season_type == "REG") %>% select(player_id, player_name, recent_team, season, week, receptions, targets, receiving_yards, receiving_tds, receiving_fumbles_lost, receiving_air_yards, receiving_yards_after_catch, target_share, fantasy_points_ppr)
+wrs <- d2010_to_2022 %>% filter(position %in% c("TE", "WR")) %>% filter(season_type == "REG") %>% select(player_id, player_name, recent_team, season, week, receptions, targets, receiving_yards, receiving_tds, receiving_fumbles_lost, receiving_air_yards, receiving_yards_after_catch, target_share, fantasy_points_ppr, position, wopr, receiving_air_yards, receiving_epa)
 
-wr_by_season <- wrs %>% group_by(player_id, season) %>% summarize(total_pts = sum(fantasy_points_ppr), total_games = n(), points_per_game = total_pts / total_games, total_targets = sum(targets), targets_per_game = total_targets / total_games)
+## adjusting for season:
+wrs <- within(wrs, {
+  receptions[season < 2021] <- receptions[season < 2021] * 17 / 16
+  targets[season < 2021] <- targets[season < 2021] * 17 / 16
+  receiving_yards[season < 2021] <- receiving_yards[season < 2021] * 17 / 16 
+  fantasy_points_ppr[season < 2021] <- fantasy_points_ppr[season < 2021] * 17 / 16 
+  receiving_tds[season < 2021] <- receiving_tds[season < 2021] * 17 / 16 
+  wopr[season < 2021] <- wopr[season < 2021] * 17 / 16
+  receiving_air_yards[season < 2021] <- receiving_air_yards[season < 2021] * 17 / 16
+  receiving_epa[season < 2021] <- receiving_epa[season < 2021] * 17 / 16
+})
 
-
-
+wr_by_season <- wrs %>% group_by(player_id, season) %>% summarize(total_pts = sum(fantasy_points_ppr), total_games = n(), points_per_game = total_pts / total_games, total_targets = sum(targets), targets_per_game = total_targets / total_games, wopr_per_game = sum(wopr) / total_games, epa_per_game = sum(receiving_epa) / total_games, air_yards_per_game = sum(receiving_air_yards) / total_games)
 
 ```
 
 
 ```{r}
 
-new_df <- wr_by_season %>%
-  filter(total_games > 8) %>% 
+MASTER <- wr_by_season %>%
+  # this gets rid of injured players
+ #filter(total_games > 8) %>% 
+  # THE TEBOW EXCLUSION:
+  filter(player_id != "00-0027876") %>%
   arrange(player_id, season) %>%
   group_by(player_id) %>%
-  mutate(points_from_last_year = lag(points_per_game),
-         targets_from_last_year = lag(total_targets),
-         targets_per_game_last_year = lag(targets_per_game),
-         total_games_last_year = lag(total_games)) %>%
+  mutate(points_ly = lag(points_per_game),
+         targets_ly = lag(total_targets),
+         targets_pg_ly = lag(targets_per_game),
+         total_games_ly = lag(total_games),
+         points_2y = lag(points_per_game, n=2),
+         targets_2y = lag(total_targets, n=2),
+         targets_pg_2y = lag(targets_per_game, n=2),
+         total_games_2y = lag(total_games, n=2),
+         points_3y = lag(points_per_game, n=3),
+         targets_3y = lag(total_targets, n=3),
+         targets_pg_3y = lag(targets_per_game, n=3),
+         total_games_3y = lag(total_games, n=3),
+         epa_pg_ly = lag(epa_per_game, n=1),
+         wopr_pg_ly = lag(wopr_per_game, n=1),
+         air_yards_pg_ly = lag(air_yards_per_game, n=1),
+         wopr_pg_2y = lag(wopr_per_game, n=2),
+         wopr_pg_3y = lag(wopr_per_game, n=2)) %>%
   ungroup()
 
-new_df <- new_df %>% filter(!is.na(points_from_last_year))
+# calculate years pro
+MASTER <- MASTER %>% group_by(player_id) %>% arrange(player_id, season) %>% mutate(years_pro = season - first(season))
 
-ggplot(new_df, aes(x = targets_per_game_last_year, y = points_per_game)) + geom_point() + geom_smooth(method = "lm", se = F)
+MASTER <- data.frame(lapply(MASTER, function(x) ifelse(is.na(x), 0, x)))
+# this gets rid of rookies
+#MASTER <- MASTER %>% filter(!is.na(points_from_last_year))
 
-M <- lm(points_per_game ~ targets_per_game_last_year*points_from_last_year+total_games, data = new_df)
+ggplot(MASTER, aes(x = points_ly, y = points_per_game)) + geom_point() + geom_smooth(method = "lm", se = F)
+
+M <- lm(points_per_game ~ targets_pg_ly*points_ly+total_games, data = MASTER)
 summary(M)
+
+```
+
+
+```{r}
+
+#TO CHECK: 00-0024243
+## adding in their team from week 17:
+# TODO: remove tim tebow: 00-0027876
+
+
+## DEVANTAE CHECK
+dcheck <- wrs %>% filter(player_id == "00-0034521")
+
+wr_last_team <- wrs %>% group_by(player_id, season) %>% filter(week == max(week)) %>% mutate(last_team_last_year = recent_team) %>% select(player_id, season, last_team_last_year) %>% arrange(player_id, season)
+
+
+wr_first_team <- wrs %>% group_by(player_id, season) %>% filter(week == min(week)) %>% mutate(starting_team = recent_team) %>% select(player_id, season, starting_team)
+
+wr_last_team$for_season <- wr_last_team$season + 1
+wr_last_team$season <- NULL
+
+wr_team_history <- NULL
+wr_team_history <- left_join(wr_first_team, wr_last_team, by = c("player_id", c("season" = "for_season")))
+
+
+season_attempts_last_year <- d2010_to_2022 %>%
+  filter(season_type == "REG") %>%
+  group_by(season, recent_team) %>%
+  summarize(total_attempts_ly = sum(attempts)) %>%
+  mutate(season = season + 1)
+
+
+wr_attempt_table <- wr_team_history %>% left_join(season_attempts_last_year, by = c("season", c("starting_team" = "recent_team")))
+
+wr_attempt_table <- wr_attempt_table %>% rename(pass_attempts_new_team = total_attempts_ly)
+
+wr_attempt_table <- wr_attempt_table %>% left_join(season_attempts_last_year, by = c("season", c("last_team_last_year" = "recent_team")))
+
+wr_attempt_table <- wr_attempt_table %>% rename(pass_attempts_old_team = total_attempts_ly) %>% mutate(pass_attempt_difference = pass_attempts_new_team - pass_attempts_old_team)
+
+
+wr_attempt_table$pass_attempt_difference <- ifelse(is.na(wr_attempt_table$pass_attempt_difference), 0, wr_attempt_table$pass_attempt_difference)
+# TODO : add pass attempts difference to MASTER
+MASTER <- wr_attempt_table %>% select(player_id, season, pass_attempt_difference, starting_team) %>% right_join(MASTER, by = c("player_id", "season"))
+
+
+```
+
+
+```{r}
+# draft pick status:
+draft_history <- load_draft_picks() %>% filter(position %in% c("WR", "TE"))
+
+# read in draft info fix
+gsis <- read_csv("Downloads/draftinfo_gsis_fix.csv")
+
+names(gsis)
+
+draft_history <- gsis %>% select(pfr_player_name, gsis_id) %>% right_join(draft_history, by = "pfr_player_name")
+draft_history$gsis_id.y <- ifelse(is.na(draft_history$gsis_id.y), draft_history$gsis_id.x, draft_history$gsis_id.y)
+
+draft_history$player_id <- draft_history$gsis_id.y
+
+# joining in pick info for players in master
+MASTER <- draft_history %>% select(pfr_player_id, pfr_player_name, player_id, pick, round) %>% right_join(MASTER, by = "player_id")
+
+## testing: fill UDFA with 0 and then inspect:
+ggplot(MASTER, aes(x = pick, y = points_per_game)) + geom_point() + geom_smooth(method = "lm", se = F)
+
+# visuallizing points per game by drafted / undrafted
+ggplot(data = MASTER) +
+  geom_violin(aes(x = ifelse(is.na(pick), "Undrafted", "Got Drafted"), y = points_per_game)) +
+  labs(x = "Pick Availability", y = "Points Per Game") +
+  ggtitle("Boxplot of Points Per Game by Pick Availability")
+
+# filling NA with 300 for undfrafteds
+MASTER <- MASTER %>% mutate(pick = ifelse(is.na(pick), 300, pick))
+```
+
+```{r}
+# TODO: include wr/te as variable in master
+positions <- wrs %>% group_by(player_id, position) %>% summarize(remove = n()) %>% select(player_id, position) %>% filter(player_id != "00-0036145")
+
+#adding positions to master
+MASTER <- MASTER %>% left_join(positions, by = "player_id")
+#adding teams to master:
+# need to rename team names for history
+drafting_teams <- unique(draft_history$team)
+# getting teams in master
+master_teams <- unique(wr_attempt_table$starting_team)
+# get list of teams in drafting that are NOT in master
+drafting_teams[which(!(drafting_teams %in% master_teams))]
+master_teams[which(!(master_teams %in% drafting_teams))]
+
+
+draft_history <- draft_history %>% mutate(team = recode(team, 
+            "GNB" = "GB",
+            "STL" = "LA",
+            "KAN" = "KC",
+            "NOR" = "NO",
+            "SFO" = "SF",
+            "NWE" = "NE",
+            "OAK" = "LV",
+            "SDG" = "LAC",
+            "TAM" = "TB",
+            "LAR" = "LA",
+            "LVR" = "LV"))
+
+# cleaning draft_history
+draft_history <- draft_history %>% select(season, pick, team, position, player_id) 
+# TODO: calculate draft capital invested on WR
+decay_rate <- .013
+draft_capital_calculator <- draft_history %>% mutate(pick_investment = exp(-.013 * pick))
+#plotting what that invesment looks like
+ggplot(draft_capital_calculator, aes(x=pick, y = pick_investment)) + geom_point() + labs(title = "visualizing investment score from the pick")
+
+pick_investment_grouped <- draft_capital_calculator %>% group_by(team, season, position) %>% summarize(total_positional_investment = round(sum(pick_investment),2)) %>% filter(position %in% c("WR", "TE"))
+
+
+# fill in all NA values of position with WR
+MASTER$position <- replace(MASTER$position, is.na(MASTER$position), "WR")
+# adding in pick investment to master
+MASTER <- MASTER %>% left_join(pick_investment_grouped, by = c("season", "position", c("starting_team" = "team")))
+# fill NA pick investment to 0
+MASTER$total_positional_investment <- replace(MASTER$total_positional_investment, is.na(MASTER$total_positional_investment), 0)
+
+# adjusting investment to ignore YOURSELF
+MASTER <- MASTER %>%
+  left_join(draft_history, by = c("player_id", "season"), suffix = c("", "_DEL")) %>%
+  mutate(adjustment = ifelse(!is.na(pick_DEL), exp(-decay_rate * pick_DEL), 0)) %>% mutate(total_positional_investment = round(total_positional_investment - adjustment, 2)) %>% select(-pick_DEL, -position_DEL, -team, -adjustment)
+
+MASTER$total_positional_investment <- ifelse(MASTER$total_positional_investment > 0, MASTER$total_positional_investment, 0)
+
+summary(MASTER)
+```
+
+```{r}
+# TODO: calculate targets lost + targets gained by TEAM
+team_targets_by_player <- d2010_to_2022 %>% filter(season_type == "REG") %>% group_by(player_id, season, recent_team) %>% summarize(yearlong_targets = sum(targets))
+
+
+
+wr_by_yr <- wrs %>%
+  group_by(player_id, recent_team, season) %>%
+  summarize(targets = sum(targets)) %>%
+  arrange(player_id, recent_team, season) %>%  # Sort the data for correct lagging
+  mutate(targets_same_team_last_year = ifelse(
+    player_id == lag(player_id) & recent_team == lag(recent_team) & season == lag(season) + 1,
+    lag(targets),
+    0
+  ))
+
+tm_targets_remaining <- wr_by_yr %>% group_by(recent_team, season) %>% summarize(remaining_targets_last_year = sum(targets_same_team_last_year, na.rm = T))
+
+
+targets_last_yr <- wr_by_yr %>% group_by(recent_team, season) %>% summarize(total_targets_last_year = sum(targets))
+targets_last_yr$season <- targets_last_yr$season + 1
+
+target_dropoff <- tm_targets_remaining %>% left_join(targets_last_yr, by = c("season", "recent_team")) %>% select(recent_team, season, remaining_targets_last_year, total_targets_last_year) %>% mutate(target_dropoff = total_targets_last_year - remaining_targets_last_year)
+
+
+summary(MASTER)
+
+MASTER <- MASTER %>% left_join(target_dropoff, by = c("season", c("starting_team" = "recent_team")))
+MASTER <- MASTER %>% select(-remaining_targets_last_year, -total_targets_last_year)
+
+
+```
+
+
+```{r}
+# how well does draft position predict performance for rookies???
+rookies <- MASTER %>%
+  group_by(player_id) %>%
+  filter(season == min(season))
+
+non_rookies <- MASTER %>%
+  anti_join(rookies, by = c("player_id", "season"))
+
+drafted_rookies <- rookies %>% filter(pick < 300)
+ggplot(drafted_rookies, aes(x = pick, y = points_per_game, color = position)) + geom_point() + geom_smooth()
+
+ggplot(rookies, aes(x=factor(round), y = points_per_game)) + geom_violin()
+
+```
+
+
+```{r}
+# COMBINE DATA
+
+# assuming 6 clusters for WR and 4 for TE
+combine_data <- load_combine()
+names(combine_data)
+pfr_to_gsis <- load_ff_playerids() %>% select(gsis_id, pfr_id) %>% distinct(pfr_id, gsis_id)
+pfr_to_gsis <- pfr_to_gsis %>% filter(!is.na(pfr_id))
+combine_data <- combine_data %>% filter(!is.na(pfr_id)) %>% filter(pos %in% c("WR", "TE"))
+combine_data <- combine_data %>% left_join(pfr_to_gsis, by = "pfr_id")
+summary(factor(combine_data$gsis_id))
+
+# 2 instances:
+test <- combine_data %>% filter(pfr_id %in% c("BrowCh03", "BrowPh00"))
+
+names(combine_data)
+
+# select the relevant cols
+combine_data <- combine_data %>% select(ht, wt, forty, cone, vertical, shuttle, gsis_id, pfr_id, pos)
+
+
+combine_data <- combine_data %>%
+  separate(ht, into = c('ft', 'inc'), sep = "-") %>%
+  mutate(ft = as.numeric(ft), inc = as.numeric(inc), ht_in = (ft * 12) + inc) %>%
+  select(-ft, -inc)
+
+
+
+# inspecting missing columns
+vis_miss(combine_data)
+
+non_id_cols <- c("wt", "forty", "cone", "vertical", "shuttle", "ht_in")
+completed_rows <- complete.cases(combine_data[,non_id_cols])
+complete_combine <- combine_data[completed_rows ,]
+missing_combine <- combine_data[!completed_rows ,]
+
+complete_combine_wr <- complete_combine %>% filter(pos == "WR")
+complete_combine_te <- complete_combine %>% filter(pos == "TE")
+missing_combine_wr <- missing_combine %>% filter(pos == "WR")
+missing_combine_te <- missing_combine %>% filter(pos == "TE")
+# creating clustering algo based on complete cases.
+# Center and scale the data
+scaled_data_wr <- scale(complete_combine_wr %>% select(-gsis_id, -pfr_id, -pos))
+scaled_data_te <- scale(complete_combine_te %>% select(-gsis_id, -pfr_id, -pos))
+# Calculate the Euclidean distance matrix
+
+dist_matrix_te <- dist(scaled_data_te, method = "euclidean")
+dist_matrix_wr <- dist(scaled_data_wr, method = "euclidean")
+
+# Perform hierarchical clustering
+hc_wr <- hclust(dist_matrix_wr)
+hc_te <- hclust(dist_matrix_te)
+# Initialize an empty vector to store SSD values
+ssd <- c()
+# Loop through different numbers of clusters (2 to a reasonable maximum)
+for (k in 1:10) {
+  kmeans_model_wr <- kmeans(dist_matrix_wr, centers = k)
+  ssd[k] <- kmeans_model_wr$tot.withinss
+}
+# Plot the SSD values against the number of clusters
+plot(1:10, ssd, type = "b", 
+     xlab = "Number of Clusters (K)", ylab = "Sum of Squared Distances (SSD)")
+title("Elbow Plot")
+
+# with 4 clusters, lets get the clusters
+kmeans_model_wr <- kmeans(scaled_data_wr, centers = 6)
+kmeans_model_te <- kmeans(scaled_data_te, centers = 4)
+# Get cluster assignments for each data point
+cluster_labels_wr <- kmeans_model_wr$cluster
+cluster_labels_te <- kmeans_model_te$cluster + 6
+
+complete_combine_wr$cluster <- cluster_labels_wr
+complete_combine_te$cluster <- cluster_labels_te
+
+#clusterbreakdown <- complete_combine %>% group_by(cluster) %>% summarize(mean_wt = mean(wt), mean_forty = mean(forty), mean_cone = mean(cone), mean_vertical = mean(vertical), mean_shuttle = mean(shuttle), mean_ht = mean(ht_in), count = n())
+
+
+# applying to "missing combine"
+missing_combine_scaled_wr <- as.data.frame(scale(missing_combine_wr %>% select(-gsis_id, -pfr_id, -pos)))
+missing_combine_scaled_te <- as.data.frame(scale(missing_combine_te %>% select(-gsis_id, -pfr_id, -pos)))
+
+# working centers:
+centers_wr <- data.frame(kmeans_model_wr$centers)
+centers_te <- data.frame(kmeans_model_te$centers)
+
+results_wr <- data.frame(rownum = 0, cluster = 0, dist = 0)
+results_te <- data.frame(rownum = 0, cluster = 0, dist = 0)
+# looping through each row in missing combine
+for (center_row in 1:nrow(centers_wr)) {
+  cluster_to_test <- centers_wr[center_row,]
+  for (i in 1:nrow(missing_combine_scaled_wr)) {
+    row <- missing_combine_scaled_wr[i,]
+    row_d <- c()
+    for (col in colnames(row)) {
+      single_col_d <- 0
+      if (!is.na(row[,col])) {
+        single_col_d <- sqrt((row[,col] - cluster_to_test[,col])^2)
+      }
+      row_d <- c(row_d, single_col_d)
+    }
+    total_dist_row <- sum(row_d)
+    to_add <- data.frame(rownum = i,
+                         cluster = center_row,
+                         dist = total_dist_row)
+    results_wr <- rbind(results_wr, to_add)
+  }
+}
+for (center_row in 1:nrow(centers_te)) {
+  cluster_to_test <- centers_te[center_row,]
+  for (i in 1:nrow(missing_combine_scaled_te)) {
+    row <- missing_combine_scaled_te[i,]
+    row_d <- c()
+    for (col in colnames(row)) {
+      single_col_d <- 0
+      if (!is.na(row[,col])) {
+        single_col_d <- sqrt((row[,col] - cluster_to_test[,col])^2)
+      }
+      row_d <- c(row_d, single_col_d)
+    }
+    total_dist_row <- sum(row_d)
+    to_add <- data.frame(rownum = i,
+                         cluster = center_row,
+                         dist = total_dist_row)
+    results_te <- rbind(results_te, to_add)
+  }
+}
+
+# get rid of blank test row
+results_wr <- results_wr %>% filter(rownum > 0)
+results_te <- results_te %>% filter(rownum > 0)
+
+assignments_wr <- results_wr %>%
+  group_by(rownum) %>%  # Group by 'rownum'
+  slice(which.min(dist)) %>%  # Select rows with the minimum 'dist'
+  ungroup() %>%  # Remove grouping
+  select(rownum, cluster)  %>% # Select 'rownum' and 'cluster' column
+  arrange(rownum)
+
+assignments_te <- results_te %>%
+  group_by(rownum) %>%  # Group by 'rownum'
+  slice(which.min(dist)) %>%  # Select rows with the minimum 'dist'
+  ungroup() %>%  # Remove grouping
+  select(rownum, cluster)  %>% # Select 'rownum' and 'cluster' column
+  arrange(rownum)
+
+
+missing_combine_wr$cluster <- assignments_wr$cluster 
+missing_combine_te$cluster <- assignments_te$cluster + 6
+
+#missing_combine_breakdown <- missing_combine %>% group_by(cluster) %>% summarize(mean_wt = mean(wt, na.rm=T), mean_forty = mean(forty, na.rm=T), mean_cone = mean(cone,na.rm=T), mean_vertical = mean(vertical, na.rm=T), mean_shuttle = mean(shuttle, na.rm=T), mean_ht = mean(ht_in, na.rm=T))
+
+full_combine_clustered <- rbind(missing_combine_wr, complete_combine_wr, missing_combine_te, complete_combine_te) %>% rename(combine_cluster = cluster) %>% select(combine_cluster, gsis_id, pfr_id)
+```
+
+```{r}
+# joining cluster assignments to master
+MASTER <- MASTER %>% left_join(full_combine_clustered, by = c("player_id" = "gsis_id"))
+
+
+MASTER$combine_cluster <- ifelse(is.na(MASTER$combine_cluster), "no_combine_cluster", MASTER$combine_cluster)
+
+MASTER$combine_cluster <- factor(MASTER$combine_cluster)
+
+summary(factor(MASTER$combine_cluster))
+```
+
+```{r}
+# min season
+
+# CHECKING FOR NON ROOKIES
+#MASTER <- rookies
+# delete the line above ^^^ to include rookies
+## WHAT IF ITS ONLY WRS?
+#MASTER <- MASTER %>% filter(position == "WR")
+
+year_to_remove <- min(MASTER$season)
+MASTER <- MASTER %>% filter(season > year_to_remove)
+# Create an index for the 70/30 train-test split
+trainIndex <- createDataPartition(MASTER$points_per_game, p = 0.7, 
+                                  list = FALSE)
+
+# Split the data into training and testing sets
+trainData <- MASTER[trainIndex, ]
+testData <- MASTER[-trainIndex, ]
+
+# Create a train control object for 5-fold cross-validation
+ctrl <- trainControl(method = "cv", number = 5)
+
+
+
+
+model <- train(points_per_game ~ points_ly + total_games_ly + pick + targets_pg_ly + pass_attempt_difference + position + total_positional_investment + target_dropoff + points_2y + total_games_2y + points_3y + total_games_3y + targets_pg_2y + targets_pg_3y + combine_cluster + epa_pg_ly + wopr_pg_ly + air_yards_pg_ly + years_pro + wopr_pg_2y + wopr_pg_3y, data = trainData, 
+               method = "rf", trControl = ctrl)
+
+# Make predictions on the test set
+predictions <- predict(model, newdata = testData)
+
+# Evaluate the model's performance
+results <- postResample(predictions, testData$points_per_game)
+
+
+testData$predicted <- predictions
+trainData$predicted <- predict(model, newdata = trainData)
+
+testData$is_testing <- 1
+trainData$is_testing <- 0
+### MAKING UNIFIED
+
+post_ml_data <- rbind(testData, trainData)
+
+ggplot(testData, aes(predicted, points_per_game)) + geom_point(color = "blue") + geom_abline(intercept = 0, slope = 1, color = "red", linewidth = 1.5) + labs(title = "predicted PPG vs Actual\nred line is PERFECT prediction", y = "actual PPG", x = "PREDICTED PPG")
+
+
+# Assuming you have a column named "pfr_player_name" in your testData
+gg <- ggplot(testData, aes(predicted, points_per_game, text = paste(pfr_player_name, season, starting_team, position), color = position)) +
+  geom_point() +
+  geom_abline(intercept = 0, slope = 1, color = "red", linewidth = 1.5) +
+  labs(title = "predicted PPG vs Actual\nred line is PERFECT prediction", y = "actual PPG", x = "PREDICTED PPG")
+
+# Convert the ggplot to an interactive plot using plotly
+ggplotly(gg)
+print(results)
+
+
+#train vs test rmse
+# Calculate RMSE when is_testing == 1
+rmse_testing_1 <- sqrt(mean((post_ml_data$points_per_game[post_ml_data$is_testing == 1] - post_ml_data$predicted[post_ml_data$is_testing == 1])^2))
+
+# Calculate RMSE when is_testing == 0
+rmse_testing_0 <- sqrt(mean((post_ml_data$points_per_game[post_ml_data$is_testing == 0] - post_ml_data$predicted[post_ml_data$is_testing == 0])^2))
+
+rmse_testing_1  
+rmse_testing_0 
+
+```
+
+
+```{r}
+# searching for fantasy football ranks
+competition_ranks <- load_ff_rankings()
+
+#%>% filter(ecr_type == "ro", pos %in% c("WR", "TE"))
+competition_ranks$ecr_type <- factor(competition_ranks$ecr_type)
+summary(competition_ranks)
+summary(competition_ranks)
+```
+
+```{r}
+# variable importance:
+importance <- varImp(model)
+
+# Step 3: Create a dalex model
+dalex_model <- explain(model = model,
+                       data = MASTER,
+                       y = MASTER$points_per_game,
+                       predict_function = predict)
+
+# Step 4: Plot variable importance using DALEX
+plot(importance)
+
+# You can also create other plots and model interpretation visualizations using dalex
+# For example, partial dependence plots
+prof <- model_profile(dalex_model, type = "accumulated", variable = "wopr_pg_ly")
+plot(prof)
+
+
+amonra <- post_ml_data %>% filter(season == 2022, player_id == "00-0036963")
+a_breakdown <- predict_parts(explainer = dalex_model, amonra, type = "break_down")
+plot(a_breakdown)
+# 00-0034521
+
+
+```
+
+```{r}
+# can we inspect the 2022 season
+test2022 <- post_ml_data %>% filter(season == 2022, position == "WR")
+```
+
+```{r}
+# biggest misses check: 
+testData$residual <- testData$points_per_game - testData$predicted
+
+a <- testData %>% arrange(desc(abs(residual))) %>% select(player_id, points_per_game, predicted, points_from_last_year, residual, season) %>% head(10)
+
+b <- wrs %>% filter(player_id %in% a$player_id, season %in% a$season)
+```
+
+```{r}
+# investigating michael thomas vs garret wilson
+
+# both did well their rookie years (17ppg MT, 13 GW)
+# but MT was proj 7 and GW only projected 3. why?
+# MT = 00-0032765
+# GW = 00-0037740
+mt_vs_gw <- MASTER %>% filter((player_id == "00-0037740" & season == 2022) | (player_id == "00-0032765" & season == 2016))
+#why tf was garrett wilson undrafted?????
+
+```
+
+```{r}
+# QUICK: print the long career ppl
+print(wr_by_season %>% group_by(player_id) %>% summarize(c = n()) %>% arrange(desc(c)))
+
+# how many unique pass catchers do we have??
+distinct_player_count <- wrs %>% distinct(player_id) %>% nrow()
+
+
+print(wrs %>% filter(player_id == "00-0024221"))
+
+# show me all players who didnt play in 2021
+no2021 <- MASTER %>% filter(season == 2022, points_from_last_year == 0)
+
+```
+
+
+
+
+```{r}
+#TODO: figure out a workaround of gsis id missing values
+looking_at_nas <- <- %>% filter(season > 2000) %>% filter(is.na(gsis_id)) %>% filter(position %in% c("WR", "TE")) %>% select(season, round, pick, team, gsis_id, cfb_player_id, pfr_player_name, position)
+
+write.csv(looking_at_nas, "/Users/max/Downloads/missing_draft_info.csv", row.names =  F)
+# limit to just wr/te in dataset
+draft_history <- draft_history %>% filter(gsis_id %in% wrs$player_id)
+draft_history_to_join <- draft_history %>% select(round, pick, gsis_id)
+
+
+MASTER <- MASTER %>% left_join(draft_history_to_join, by = c("player_id" = "gsis_id"))
+
+player_names <- wrs %>%
+  select(player_id, player_name, position, season, receptions, recent_team, receiving_yards) %>%
+  group_by(player_id) %>%  # Group by player_id
+  filter(season == min(season)) %>%  # Filter for rows with the minimum season for each player_id
+  group_by(player_id, player_name, position, season, recent_team) %>%
+  summarize(yr_rec = sum(receptions),
+            yr_yds = sum(receiving_yards))
+write.csv(player_names, "/Users/max/Downloads/master_broken_draft_info.csv", row.names = F)
+
+
+```
+
+
+
+```{r}
+db_fpecr <- read_csv("Downloads/db_fpecr.csv")
+competition_ranks <- db_fpecr %>% filter(ecr_type == "ro", month(scrape_date) == 8, pos %in% c("WR", "TE"))
+summary(competition_ranks)
+
+competition_ranks$year <- year(competition_ranks$scrape_date)
+
+
+#https://fantasyfootballcalculator.com/adp/ppr/12-team/wide-receiver/2022
+url <- "https://fantasyfootballcalculator.com/adp/ppr/12-team/wide-receiver/2022"
+
+# Read the webpage
+response <- GET(url)
+
+# Extract the data you need (you may need to inspect the HTML of the website to determine the CSS selector)
+data <- webpage %>%
+  html_nodes(".table-wrapper table") %>%  # Use the appropriate CSS selector to target the table
+  html_table()
 
 ```
 
