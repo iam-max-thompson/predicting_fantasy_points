@@ -1,6 +1,6 @@
 ---
 title: "Homework 5"
-author: "Jarett Smith"
+author: "Jarett Smith, Balin Allred, Charlie Deaton, and Max Thompson"
 date: "`r Sys.Date()`"
 output: pdf_document
 ---
