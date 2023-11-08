@@ -17,22 +17,24 @@ library(zoo)
 library(plotly)
 library(DALEX)
 library(visdat)
+library(gbm)
+library(groupdata2)
 library("rvest")
 library("xml2")
-setwd("/Users/max")
+setwd("/Users/max/Desktop/predicting_fantasy_points")
 ```
 
 
 ```{r}
-d2010_to_2022 <- load_player_stats(c(2010:2023))
+d2010_to_2022 <- load_player_stats(c(2016:2023))
 d2010_to_2022$position <- factor(d2010_to_2022$position)
 d2010_to_2022$season_type <- factor(d2010_to_2022$season_type)
 
 
 wrs <- d2010_to_2022 %>% filter(position %in% c("TE", "WR")) %>% filter(season_type == "REG") %>% select(player_id, player_name, recent_team, season, week, receptions, targets, receiving_yards, receiving_tds, receiving_fumbles_lost, receiving_air_yards, receiving_yards_after_catch, target_share, fantasy_points_ppr, position, wopr, receiving_air_yards, receiving_epa)
 
-
 wr_by_season <- wrs %>% group_by(player_id, season) %>% summarize(total_pts = sum(fantasy_points_ppr), total_games = n(), points_per_game = total_pts / total_games, total_targets = sum(targets), targets_per_game = total_targets / total_games, wopr_per_game = sum(wopr) / total_games, epa_per_game = sum(receiving_epa) / total_games, air_yards_per_game = sum(receiving_air_yards) / total_games)
+
 
 is_old_nfl <- wr_by_season$season < 2021
 adjustment <- 17/16
@@ -47,6 +49,24 @@ wr_by_season$total_pts <- ifelse(is_old_nfl, wr_by_season$total_pts * adjustment
 
 
 
+
+```
+
+
+```{r}
+# gotta get pfr_player_ids into wr_by_season 
+player_ids <- load_ff_playerids() %>% select(pfr_id, gsis_id) %>% rename(pro_fr_id = pfr_id)
+
+wr_by_season <- wr_by_season %>% left_join(player_ids, by = c("player_id" = "gsis_id"))
+
+# adding in snap count info
+snaps <- load_snap_counts(seasons = c(2012:2023))
+
+snaps_by_season <- snaps %>% filter(game_type == "REG", position %in% c("WR", "TE")) %>% mutate(total_snaps = offense_snaps / offense_pct) %>% group_by(pfr_player_id, season) %>% summarize(season_snaps = sum(offense_snaps), avg_snap_rate = mean(total_snaps, na.rm = T))
+
+names(wr_by_season)
+
+wr_by_season <- wr_by_season %>% left_join(snaps_by_season, by = c("season", c("pro_fr_id" = "pfr_player_id")))
 
 ```
 
@@ -133,8 +153,11 @@ wr_attempt_table <- wr_attempt_table %>% rename(pass_attempts_old_team = total_a
 
 
 wr_attempt_table$pass_attempt_difference <- ifelse(is.na(wr_attempt_table$pass_attempt_difference), 0, wr_attempt_table$pass_attempt_difference)
-# TODO : add pass attempts difference to MASTER
-MASTER <- wr_attempt_table %>% select(player_id, season, pass_attempt_difference, starting_team) %>% right_join(MASTER, by = c("player_id", "season"))
+
+# TODO: add indicator variable if on a new team or not:
+wr_attempt_table$is_on_new_team <- ifelse(wr_attempt_table$pass_attempt_difference == 0, 0, 1)
+
+MASTER <- wr_attempt_table %>% select(player_id, season, pass_attempt_difference, starting_team, is_on_new_team) %>% right_join(MASTER, by = c("player_id", "season"))
 
 
 ```
@@ -145,7 +168,7 @@ MASTER <- wr_attempt_table %>% select(player_id, season, pass_attempt_difference
 draft_history <- load_draft_picks() %>% filter(position %in% c("WR", "TE"))
 
 # read in draft info fix
-gsis <- read_csv("Downloads/draftinfo_gsis_fix.csv")
+gsis <- read_csv("draftinfo_gsis_fix.csv")
 
 names(gsis)
 
@@ -227,39 +250,54 @@ MASTER$total_positional_investment <- ifelse(MASTER$total_positional_investment 
 summary(MASTER)
 ```
 
+
+
 ```{r}
+#######TODO: try to get targets ADDED from last year 
 # TODO: calculate targets lost + targets gained by TEAM
-team_targets_by_player <- d2010_to_2022 %>% filter(season_type == "REG") %>% group_by(player_id, season, recent_team) %>% summarize(yearlong_targets = sum(targets))
-
-
-
 wr_by_yr <- wrs %>%
-  group_by(player_id, recent_team, season) %>%
-  summarize(targets = sum(targets)) %>%
-  arrange(player_id, recent_team, season) %>%  # Sort the data for correct lagging
+  group_by(player_id, season) %>%
+  summarize(targets = sum(targets),
+            final_team = recent_team[which.max(week)],
+            starting_team = recent_team[which.min(week)]) %>%
+  mutate(targets = ifelse(season < 2021, targets * 17/16, targets)) %>%
+  arrange(player_id, season, final_team) %>%  # Sort the data for correct lagging
   mutate(targets_same_team_last_year = ifelse(
-    player_id == lag(player_id) & recent_team == lag(recent_team) & season == lag(season) + 1,
+    player_id == lag(player_id) & starting_team == lag(final_team) & season == lag(season) + 1,
     lag(targets),
-    0
+    NA
+  ),
+  targets_for_new_team = ifelse(
+    player_id == lag(player_id) & starting_team != lag(final_team) & season == lag(season) + 1,
+    lag(targets),
+    NA
   ))
 
-tm_targets_remaining <- wr_by_yr %>% group_by(recent_team, season) %>% summarize(remaining_targets_last_year = sum(targets_same_team_last_year, na.rm = T))
+
+#making the pre-2021 adjustment for wr_by_yr
+#wr_by_yr$targets <- ifelse(wr_by_yr$season < 2021, wr_by_yr$targets * 17/16, wr_by_yr$targets)
+
+tm_targets_remaining <- wr_by_yr %>% group_by(starting_team, season) %>% summarize(remaining_targets_last_year = sum(targets_same_team_last_year, na.rm = T), targets_added_this_year = sum(targets_for_new_team, na.rm = T))
 
 
-targets_last_yr <- wr_by_yr %>% group_by(recent_team, season) %>% summarize(total_targets_last_year = sum(targets))
+targets_last_yr <- wr_by_yr %>% group_by(final_team, season) %>% summarize(total_targets_last_year = sum(targets))
+
 targets_last_yr$season <- targets_last_yr$season + 1
 
-target_dropoff <- tm_targets_remaining %>% left_join(targets_last_yr, by = c("season", "recent_team")) %>% select(recent_team, season, remaining_targets_last_year, total_targets_last_year) %>% mutate(target_dropoff = total_targets_last_year - remaining_targets_last_year)
+target_dropoff <- tm_targets_remaining %>% left_join(targets_last_yr, by = c("season", c("starting_team" = "final_team"))) %>% select(starting_team, season, remaining_targets_last_year, total_targets_last_year, targets_added_this_year) %>% mutate(target_dropoff =  total_targets_last_year - remaining_targets_last_year)
 
+#fill na columns 
 
-summary(MASTER)
-
-MASTER <- MASTER %>% left_join(target_dropoff, by = c("season", c("starting_team" = "recent_team")))
+MASTER <- MASTER %>% left_join(target_dropoff, by = c("season", c("starting_team" = "starting_team")))
 MASTER <- MASTER %>% select(-remaining_targets_last_year, -total_targets_last_year)
 
+## DOUBLE CHECK THIS WORKS BEFORE PROCEEDING
+
+#if you're on a new team, subtract your targets last year from the teamwide "new targets added" column
+# THIS IS BROKEN SOMEHOW. NOT SURE HOW.
+MASTER$targets_added_this_year <- ifelse(MASTER$is_on_new_team == 1, MASTER$targets_added_this_year - MASTER$targets_ly, MASTER$targets_added_this_year)
 
 ```
-
 
 ```{r}
 # how well does draft position predict performance for rookies???
@@ -342,6 +380,7 @@ plot(1:10, ssd, type = "b",
      xlab = "Number of Clusters (K)", ylab = "Sum of Squared Distances (SSD)")
 title("Elbow Plot")
 
+set.seed(1)
 # with 4 clusters, lets get the clusters
 kmeans_model_wr <- kmeans(scaled_data_wr, centers = 6)
 kmeans_model_te <- kmeans(scaled_data_te, centers = 4)
@@ -446,7 +485,8 @@ summary(factor(MASTER$combine_cluster))
 
 
 ```{r}
-
+#save out file
+#write_csv(MASTER, "MASTER_DATA_103123.csv")
 ```
 
 ```{r}
@@ -461,9 +501,13 @@ summary(factor(MASTER$combine_cluster))
 year_to_remove <- min(MASTER$season)
 d2023 <- MASTER %>% filter(season == 2023)
 MASTER <- MASTER %>% filter(season > year_to_remove) %>% filter(season < 2023)
-# Create an index for the 70/30 train-test split
-trainIndex <- createDataPartition(MASTER$points_per_game, p = 0.7, 
-                                  list = FALSE)
+
+# Define the variable for stratification (in this case, the "season" column)
+strata_var <- MASTER$season
+
+# Create the index for stratified sampling
+set.seed(123)  # For reproducibility
+trainIndex <- createDataPartition(strata_var, p = 0.7, list = FALSE)
 
 # Split the data into training and testing sets
 trainData <- MASTER[trainIndex, ]
@@ -472,11 +516,21 @@ testData <- MASTER[-trainIndex, ]
 # Create a train control object for 5-fold cross-validation
 ctrl <- trainControl(method = "cv", number = 5)
 
+# custom_params <- expand.grid(
+#   nrounds = c(100),         # Number of boosting rounds
+#   max_depth = c(4),         # Maximum tree depth
+#   eta = c(0.1),             # Learning rate
+#   gamma = 0,
+#   min_child_weight = 1,
+#   subsample = c(0.8),       # Fraction of training data to randomly sample
+#   colsample_bytree = c(0.8) # Fraction of features to randomly sample for building trees
+# )
 
 
-
-model <- train(points_per_game ~ points_ly + total_games_ly + pick + targets_pg_ly + pass_attempt_difference + position + total_positional_investment + target_dropoff + points_2y + total_games_2y + points_3y + total_games_3y + targets_pg_2y + targets_pg_3y + combine_cluster + epa_pg_ly + wopr_pg_ly + air_yards_pg_ly + years_pro + wopr_pg_2y + wopr_pg_3y, data = trainData, 
-               method = "rf", trControl = ctrl)
+model <- train(points_per_game ~ points_ly + targets_pg_ly + wopr_pg_ly + pick + air_yards_pg_ly + total_games_ly  + pass_attempt_difference + position + total_positional_investment + target_dropoff + points_2y + total_games_2y + points_3y + total_games_3y + targets_pg_2y + targets_pg_3y + epa_pg_ly + years_pro + wopr_pg_2y + wopr_pg_3y + targets_added_this_year + is_on_new_team + combine_cluster , data = trainData, 
+               method = "rf", trControl = ctrl
+             #  , tuneGrid = custom_params
+             )
 
 # Make predictions on the test set
 predictions <- predict(model, newdata = testData)
@@ -523,7 +577,7 @@ rmse_testing_0
 
 ```{r}
 # COMPARING TO MIKE CLAY:
-espn_2023 <- read_csv("Downloads/espn_2023.csv")
+espn_2023 <- read_csv("espn_2023.csv")
 
 d2023_predictions <- predict(model, newdata = d2023)
 
@@ -534,6 +588,7 @@ to_espn$predicted_ppg <- d2023_predictions
 to_espn <- to_espn %>% select(predicted_ppg, player_id, pfr_player_name, starting_team, total_pts, points_per_game)
 
 espn_2023 <- espn_2023 %>% left_join(to_espn, by = c("gsis_id" = "player_id"))
+
 
 
 # Calculate the squared differences
@@ -571,7 +626,10 @@ plot(importance)
 
 # You can also create other plots and model interpretation visualizations using dalex
 # For example, partial dependence plots
-prof <- model_profile(dalex_model, type = "accumulated", variable = "wopr_pg_ly")
+prof <- model_profile(dalex_model, type = "accumulated", variable = "target_dropoff")
+plot(prof)
+
+prof <- model_profile(dalex_model, type = "accumulated", variable = "combine_cluster")
 plot(prof)
 
 
@@ -579,6 +637,14 @@ amonra <- post_ml_data %>% filter(season == 2022, player_id == "00-0036963")
 a_breakdown <- predict_parts(explainer = dalex_model, amonra, type = "break_down")
 plot(a_breakdown)
 # 00-0034521
+
+
+# 00-0027150
+# 2013 edelman
+edelman <- post_ml_data %>% filter(season == 2013, player_id == "00-0027150")
+e_breakdown <- predict_parts(explainer = dalex_model, edelman, type = "break_down")
+plot(e_breakdown)
+
 
 
 ```
@@ -592,9 +658,16 @@ test2022 <- post_ml_data %>% filter(season == 2022, position == "WR")
 # biggest misses check: 
 testData$residual <- testData$points_per_game - testData$predicted
 
-a <- testData %>% arrange(desc(abs(residual))) %>% select(player_id, points_per_game, predicted, points_from_last_year, residual, season) %>% head(10)
+a <- testData %>% arrange(desc(abs(residual))) %>% select(starting_team, pfr_player_name, season, points_per_game, predicted, residual, total_games, points_ly, player_id) %>% head(20)
 
 b <- wrs %>% filter(player_id %in% a$player_id, season %in% a$season)
+```
+
+
+```{r}
+# investigating 2013 edelman
+
+
 ```
 
 ```{r}
