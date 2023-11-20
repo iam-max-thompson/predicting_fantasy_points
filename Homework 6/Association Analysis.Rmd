@@ -11,7 +11,6 @@ library(readxl)
 library(arules)
 library(dplyr)
 library(knitr)
-setwd("C:/Users/jaret/OneDrive/MSBA - Fall 2023/BZAN 542 - Data Mining/Homework 6")
 TRANS<- read_xlsx("Transactions.xlsx")
 TRANS<- TRANS %>%
   group_by(ID) %>%
@@ -43,11 +42,13 @@ TRANS<- as(TRANS$Item, 'transactions')
 support<- 4/10
 support
 ```
+
 ```{r}
 # Confidence
 confidence<- 4/4
 confidence
 ```
+
 ```{r}
 # Lift
 lift<- confidence/(6/10)
@@ -60,6 +61,7 @@ lift
 rules<- apriori(TRANS, parameter=list(support=0.2, conf = 0))
 table<- inspect(rules)
 ```
+
 ```{r}
 kable(table)
 ```
@@ -79,3 +81,12 @@ table<- inspect(subset(rules, lhs %in% c("A", "C")))
 ```{r}
 kable(head(table, 2))
 ```
+
+# Question 2
+
+```{r}
+# Given a k-itemset X and an l-itemset Y ⊂ X from a set of transactions T. Given Y is infrequent and l < k − 1. Let Z represent a l + 1 itemset meaning it has 1 more element than Y. Since Z is the itemset Y plus one item, it is a superset of Y. By problem 2 hint, this means that Z is infrequent since Y is infrequent and Z is a superset of Y. Since l < k - 1 is given, we have l + 1 < k, and therefore Z ⊂ X. (Here we are showing there exists itemset l + 1, Z is infrequent and contained in X, so it may be somewhat incorrect. The next section is more of an intuitive proof that may be better.)
+
+# Alternative: We know Y has at least two items less than X since l < k - 1. If we construct Z such that it has one item less than X, it could be represented by itemset k - 1. Then we would have       l < k - 1 < k. Then we know that Y ⊂ Z ⊂ X. Since Y is infrequent we know both Z and X are infrequent. So we have shown there exists an infrequent (k − 1)-itemset Z ⊂ X.
+```
+
