@@ -1,0 +1,81 @@
+---
+title: "Homework 6"
+author: "Jarett Smith, Max Thompson, Charlie Deaton, and Balin Allred"
+date: "`r Sys.Date()`"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(readxl)
+library(arules)
+library(dplyr)
+library(knitr)
+setwd("C:/Users/jaret/OneDrive/MSBA - Fall 2023/BZAN 542 - Data Mining/Homework 6")
+TRANS<- read_xlsx("Transactions.xlsx")
+TRANS<- TRANS %>%
+  group_by(ID) %>%
+  summarize(Item=list(unique(Item)))
+
+TRANS<- as(TRANS$Item, 'transactions')
+```
+
+# Question 1
+
+1. In the following, we have ten market-basket transactions:
+
+> (a) What is the maximum size of frequent itemsets that can be extracted (assuming minsup = 0)?
+
+**Response: There are a maximum of 5 itemsets.**
+
+> (b) What is the maximum number of association rules that can be extracted from this data set (including rules that have zero support)?
+
+```{r}
+(3^5)-(2^6)+1
+```
+
+**Response: There are 180 possible rules.**
+
+> (c) Compute the support, confidence, and lift for the association rule {A, D} -> {E}
+
+```{r}
+# Support
+support<- 4/10
+support
+```
+```{r}
+# Confidence
+confidence<- 4/4
+confidence
+```
+```{r}
+# Lift
+lift<- confidence/(6/10)
+lift
+```
+
+> (d) Find all the frequent itemsets assuming minsup count = 2.
+
+```{r, results='hide'}
+rules<- apriori(TRANS, parameter=list(support=0.2, conf = 0))
+table<- inspect(rules)
+```
+```{r}
+kable(table)
+```
+
+> (e) Find an itemset (of size 2 or larger) that has the largest support.
+
+**Response: Itemset [B, D] and [D, E] has the largest support at 6/10.**
+
+> (f) Find a pair of items, say x and y, such that {x} -> {y} and {y} -> {x} have the same confidence.
+
+**Response: {A} -> {C} and {C} -> {A} have the same confidence of .4**
+
+```{r, results='hide'}
+rules<- apriori(TRANS, parameter=list(support=0.2, conf=0, minlen=2))
+table<- inspect(subset(rules, lhs %in% c("A", "C")))
+```
+```{r}
+kable(head(table, 2))
+```
