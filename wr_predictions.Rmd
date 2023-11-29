@@ -21,6 +21,7 @@ library(gbm)
 library(groupdata2)
 library("rvest")
 library("xml2")
+# if you set the wd to our folder itll all run assuming you have the updated github files
 setwd("/Users/max/Desktop/predicting_fantasy_points")
 ```
 
@@ -717,7 +718,7 @@ for (column in two_years_columns_to_adjust) {
 #MASTER <- MASTER %>% filter(years_pro == 0)
 #MASTER <- MASTER %>% filter(position == "WR")
 
-year_to_remove <- min(MASTER$season)
+year_to_remove <- min(MASTER$season) # use 2014 if using 3yrs ago data
 d2023 <- MASTER %>% filter(season == 2023)
 MASTER <- MASTER %>% filter(season > year_to_remove) %>% filter(season < 2023)
 
@@ -746,7 +747,8 @@ ctrl <- trainControl(method = "cv", number = 5)
 # )
 
 
-model <- train(points_per_game ~ points_pg_ly + targets_pg_ly + wopr_pg_ly + pick + air_yards_pg_ly + total_games_ly  + pass_attempt_difference  + total_positional_investment + target_dropoff + points_2y + total_games_2y + points_3y + total_games_3y + targets_pg_2y + targets_pg_3y + epa_pg_ly + years_pro + wopr_pg_2y + wopr_pg_3y + targets_added_this_year + is_on_new_team + points_per_snap_ly + targets_per_snap_ly + wopr_per_snap_ly + total_snaps_ly  + total_passing_tds_ly + total_passing_yds_ly + total_passing_fp_ly + is_returning_coach + hc_years_with_team + catch_rate_ly + position + fp_dropoff + starter_epa_passing_ly + starter_epa_persnap_passing_ly + combine_cluster + qbr_ly_bin, 
+model <- train(points_per_game ~ points_pg_ly + targets_pg_ly + wopr_pg_ly + pick + air_yards_pg_ly + total_games_ly  + pass_attempt_difference  + total_positional_investment + target_dropoff + epa_pg_ly + years_pro + targets_added_this_year + is_on_new_team + points_per_snap_ly + targets_per_snap_ly + wopr_per_snap_ly + total_snaps_ly  + total_passing_tds_ly + total_passing_yds_ly + total_passing_fp_ly + is_returning_coach + hc_years_with_team + catch_rate_ly + position + fp_dropoff + starter_epa_passing_ly + starter_epa_persnap_passing_ly + combine_cluster + qbr_ly_bin, 
+# removed: points_2y + total_games_2y + points_3y + total_games_3y + targets_pg_2y + targets_pg_3y + wopr_pg_2y + wopr_pg_3y +
                data = trainData, 
                method = "rf", trControl = ctrl
              #  , tuneGrid = custom_params
@@ -860,7 +862,7 @@ plot(prof)
 #Examine interaction between num/cat or cat/cat variables (see variables in numerics and cats created above)
 
 profile_group <- model_profile(explainer = dalex_model,
-variables = c("starter_epa_passing_ly"), groups = "is_on_new_team", type = "partial") 
+variables = c("points_pg_ly"), groups = "is_on_new_team", type = "partial") 
 plot(profile_group)
 
 # 
@@ -906,6 +908,8 @@ plot(addison_breakdown)
 
 # remove all years in testing when the player was hurt (total games < 2)
 testData <- testData %>% filter(total_games > 1)
+# create residual column
+testData$residual <- testData$points_per_game - testData$predicted
 
 # 1: ppg LY
 ggplot(testData, aes(x=points_pg_ly, y = residual)) + geom_point() + geom_smooth()
@@ -919,6 +923,8 @@ ggplot(testData, aes(x=target_dropoff, y = residual)) + geom_point() + geom_smoo
 # wopr pg ly
 # 1: ppg LY
 ggplot(testData, aes(x=wopr_pg_ly, y = residual)) + geom_point() + geom_smooth()
+
+ggplot(testData, aes(x=factor(years_pro), y = residual)) + geom_boxplot() + geom_smooth()
 
 
 
