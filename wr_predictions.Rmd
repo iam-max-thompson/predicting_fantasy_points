@@ -21,6 +21,7 @@ library(gbm)
 library(groupdata2)
 library("rvest")
 library("xml2")
+# if you set the wd to our folder itll all run assuming you have the updated github files
 setwd("/Users/max/Desktop/predicting_fantasy_points")
 ```
 
