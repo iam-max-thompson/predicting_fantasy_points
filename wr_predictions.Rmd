@@ -34,19 +34,11 @@ d2010_to_2022 <- load_player_stats(c(2012:2023))
 wrs <- d2010_to_2022 %>% filter(position %in% c("TE", "WR")) %>% filter(season_type == "REG") %>% select(player_id, player_name, recent_team, season, week, receptions, targets, receiving_yards, receiving_tds, receiving_fumbles_lost, receiving_air_yards, receiving_yards_after_catch, target_share, fantasy_points_ppr, position, wopr, receiving_air_yards, receiving_epa)
 
 # turns each row into 1 player, 1 season 
-wr_by_season <- wrs %>% group_by(player_id, season) %>% summarize(total_pts = sum(fantasy_points_ppr), total_games = n(), points_per_game = total_pts / total_games, total_targets = sum(targets), targets_per_game = total_targets / total_games, wopr_per_game = sum(wopr) / total_games, epa_per_game = sum(receiving_epa) / total_games, air_yards_per_game = sum(receiving_air_yards) / total_games, total_wopr = sum(wopr))
+wr_by_season <- wrs %>% group_by(player_id, season) %>% summarize(total_pts = sum(fantasy_points_ppr), total_games = n(), total_targets = sum(targets), total_wopr = sum(wopr),
+total_rec = sum(receptions), total_epa = sum(receiving_epa),
+total_air_yards = sum(receiving_air_yards))
 
 
-# everything before 2021 only had 16 games
-is_old_nfl <- wr_by_season$season < 2021
-adjustment <- 17/16
-
-# adjusting yearly totals for the old 16 game schedule
-wr_by_season$total_games <- ifelse(is_old_nfl, wr_by_season$total_games * adjustment, wr_by_season$total_games)
-
-wr_by_season$total_targets <- ifelse(is_old_nfl, wr_by_season$total_targets * adjustment, wr_by_season$total_targets)
-
-wr_by_season$total_pts <- ifelse(is_old_nfl, wr_by_season$total_pts * adjustment, wr_by_season$total_pts)
 ```
 
 
@@ -82,8 +74,9 @@ snaps <- load_snap_counts(seasons = c(2012:2023))
 
 # getting total snaps for each player for each season
 snaps_by_season <- snaps %>% 
-filter(game_type == "REG") %>% 
-  mutate(total_snaps = offense_snaps / offense_pct) %>% group_by(pfr_player_id, season) %>% summarize(season_snaps = sum(offense_snaps), avg_snap_rate = mean(total_snaps, na.rm = T))
+filter(game_type == "REG", offense_snaps > 0) %>% 
+  mutate(total_snaps = offense_snaps / offense_pct) %>% group_by(pfr_player_id, season) %>% summarize(season_snaps = sum(offense_snaps), avg_snap_rate = mean(total_snaps, na.rm = T),
+snap_games_played = n())
 
 # can check this dataframe to see if 2 players have 1 pfr_id
 checking_repeat_pfr_ids <- wr_by_season %>% group_by(new_pfr_id) %>% summarize(number_players_sameID = n_distinct(player_id))
@@ -118,22 +111,8 @@ wr_by_season <- wr_by_season %>% left_join(snaps_by_season, by = c("season", c("
 post2012 <- wr_by_season %>% filter(season > 2011)
 ggplot(post2012, aes(x=season_snaps, y = total_targets)) + geom_point() + geom_smooth()
 
-# currently missing 11 rows post 2012???
 
-# JoneDo00 - donald jones
-# AdamKy00 -- kyle adams
-#WillDe00
-#WillRo00
-#DaviRa00
-#FranJo00
-#JohnDa00
-#JoneDo00
-#ThomDe00
-#TurnPa00
-#WillMi00
-
-nas <- post2012 %>% filter(is.na(season_snaps))# %>% #select(display_name, new_pfr_id, player_id, season) %>%
- # distinct(player_id, .keep_all = T)
+nas <- post2012 %>% filter(is.na(season_snaps))
 
 #double check to see if the na players have snap counts in load_snap_counts 
 snaps_by_season %>% filter(pfr_player_id %in% nas$new_pfr_id)
@@ -145,7 +124,11 @@ wr_by_season$season_snaps <- na.fill(wr_by_season$season_snaps, fill = 100)
 
 
 # now that we have snaps, lets make out snap-related stats
-wr_by_season <- wr_by_season %>% mutate(pts_per_snap = total_pts / (season_snaps+100), targets_per_snap = total_targets / (season_snaps+100), wopr_per_snap = total_wopr / (season_snaps+100))
+wr_by_season <- wr_by_season %>% mutate(pts_per_snap = total_pts / (season_snaps+100), targets_per_snap = total_targets / (season_snaps+100), wopr_per_snap = total_wopr / (season_snaps+100),
+catch_rate =  total_rec / (total_targets+10))
+
+# turns each row into 1 player, 1 season 
+wr_by_season <- wr_by_season %>% mutate(points_per_game = total_pts / snap_games_played, targets_per_game = total_targets / snap_games_played, wopr_per_game = total_wopr / snap_games_played, epa_per_game = total_epa / snap_games_played, air_yards_per_game = total_air_yards / snap_games_played)
 
 ```
 
@@ -158,18 +141,18 @@ MASTER <- wr_by_season %>%
   arrange(player_id, season) %>%
   group_by(player_id) %>%
   # making "last year" type stats
-  mutate(points_ly = lag(points_per_game),
+  mutate(points_pg_ly = lag(points_per_game),
          targets_ly = lag(total_targets),
          targets_pg_ly = lag(targets_per_game),
-         total_games_ly = lag(total_games),
+         total_games_ly = lag(snap_games_played),
          points_2y = lag(points_per_game, n=2),
          targets_2y = lag(total_targets, n=2),
          targets_pg_2y = lag(targets_per_game, n=2),
-         total_games_2y = lag(total_games, n=2),
+         total_games_2y = lag(snap_games_played, n=2),
          points_3y = lag(points_per_game, n=3),
          targets_3y = lag(total_targets, n=3),
          targets_pg_3y = lag(targets_per_game, n=3),
-         total_games_3y = lag(total_games, n=3),
+         total_games_3y = lag(snap_games_played, n=3),
          epa_pg_ly = lag(epa_per_game, n=1),
          wopr_pg_ly = lag(wopr_per_game, n=1),
          air_yards_pg_ly = lag(air_yards_per_game, n=1),
@@ -178,7 +161,9 @@ MASTER <- wr_by_season %>%
          points_per_snap_ly = lag(pts_per_snap),
          targets_per_snap_ly = lag(targets_per_snap),
          wopr_per_snap_ly = lag(wopr_per_snap),
-         total_snaps_ly = lag(season_snaps)) %>%
+         total_snaps_ly = lag(season_snaps),
+         catch_rate_ly = lag(catch_rate),
+         total_pts_ly = lag(total_pts)) %>%
   ungroup()
 
 # calculate years pro
@@ -192,7 +177,7 @@ MASTER <- MASTER %>% left_join(years_pro_df, by = c("player_id", "season"))
 MASTER <- data.frame(lapply(MASTER, function(x) ifelse(is.na(x), 0, x)))
 
 # plot of points per game last year vs points per game this year
-ggplot(MASTER, aes(x = points_ly, y = points_per_game)) + geom_point() + geom_smooth(method = "lm", se = F)
+ggplot(MASTER, aes(x = points_pg_ly, y = points_per_game)) + geom_point() + geom_smooth(method = "lm", se = F)
 
 ```
 
@@ -230,7 +215,7 @@ wr_attempt_table <- wr_attempt_table %>% rename(pass_attempts_old_team = total_a
 wr_attempt_table$pass_attempt_difference <- ifelse(is.na(wr_attempt_table$pass_attempt_difference), 0, wr_attempt_table$pass_attempt_difference)
 
 # TODO: add indicator variable if on a new team or not:
-wr_attempt_table$is_on_new_team <- ifelse(wr_attempt_table$pass_attempt_difference == 0, 0, 1)
+wr_attempt_table$is_on_new_team <- ifelse(wr_attempt_table$pass_attempt_difference == 0, "no", "yes")
 
 MASTER <- wr_attempt_table %>% select(player_id, season, pass_attempt_difference, starting_team, is_on_new_team) %>% right_join(MASTER, by = c("player_id", "season"))
 ```
@@ -324,14 +309,14 @@ summary(MASTER)
 
 
 ```{r}
-#######TODO: try to get targets ADDED from last year 
-# TODO: calculate targets lost + targets gained by TEAM
 wr_by_yr <- wrs %>%
   group_by(player_id, season) %>%
   summarize(targets = sum(targets),
+            fantasy_pts = sum(fantasy_points_ppr),
             final_team = recent_team[which.max(week)],
             starting_team = recent_team[which.min(week)]) %>%
-  mutate(targets = ifelse(season < 2021, targets * 17/16, targets)) %>%
+  mutate(targets = ifelse(season < 2021, targets * 17/16, targets),
+         fantasy_pts = ifelse(season < 2021, fantasy_pts * 17/16, fantasy_pts)) %>%
   arrange(player_id, season, final_team) %>%  # Sort the data for correct lagging
   mutate(targets_same_team_last_year = ifelse(
     player_id == lag(player_id) & starting_team == lag(final_team) & season == lag(season) + 1,
@@ -342,31 +327,50 @@ wr_by_yr <- wrs %>%
     player_id == lag(player_id) & starting_team != lag(final_team) & season == lag(season) + 1,
     lag(targets),
     NA
-  ))
+  ),
+  fp_same_team_last_year = ifelse(
+    player_id == lag(player_id) & starting_team == lag(final_team) & season == lag(season) + 1,
+    lag(fantasy_pts),
+    NA
+  ),
+  fp_for_new_team = ifelse(
+    player_id == lag(player_id) & starting_team != lag(final_team) & season == lag(season) + 1,
+    lag(fantasy_pts),
+    NA
+  )
+  )
+
+tm_targets_remaining <- wr_by_yr %>% group_by(starting_team, season) %>% summarize(remaining_targets_last_year = sum(targets_same_team_last_year, na.rm = T), targets_added_this_year = sum(targets_for_new_team, na.rm = T),
+remaining_fp_last_year = sum(fp_same_team_last_year, na.rm = T),
+fp_added_this_year = sum(fp_for_new_team, na.rm = T))
+
+#  the ty montgomery rule: subtract 120 fantasy points from the 2017 packers
+tm_targets_remaining <- tm_targets_remaining %>% mutate(remaining_fp_last_year = ifelse(starting_team == "GB" & season == 2016, 940, tm_targets_remaining$remaining_fp_last_year))
+
+tm_targets_remaining <- tm_targets_remaining %>% mutate(remaining_targets_last_year = ifelse(starting_team == "GB" & season == 2016, 510, tm_targets_remaining$remaining_targets_last_year))
 
 
-#making the pre-2021 adjustment for wr_by_yr
-#wr_by_yr$targets <- ifelse(wr_by_yr$season < 2021, wr_by_yr$targets * 17/16, wr_by_yr$targets)
 
-tm_targets_remaining <- wr_by_yr %>% group_by(starting_team, season) %>% summarize(remaining_targets_last_year = sum(targets_same_team_last_year, na.rm = T), targets_added_this_year = sum(targets_for_new_team, na.rm = T))
-
-
-targets_last_yr <- wr_by_yr %>% group_by(final_team, season) %>% summarize(total_targets_last_year = sum(targets))
+targets_last_yr <- wr_by_yr %>% group_by(final_team, season) %>% summarize(total_targets_last_year = sum(targets), total_fp_last_year = sum(fantasy_pts))
 
 targets_last_yr$season <- targets_last_yr$season + 1
 
-target_dropoff <- tm_targets_remaining %>% left_join(targets_last_yr, by = c("season", c("starting_team" = "final_team"))) %>% select(starting_team, season, remaining_targets_last_year, total_targets_last_year, targets_added_this_year) %>% mutate(target_dropoff =  total_targets_last_year - remaining_targets_last_year)
+target_dropoff <- tm_targets_remaining %>% left_join(targets_last_yr, by = c("season", c("starting_team" = "final_team"))) %>% select(starting_team, season, remaining_targets_last_year, total_targets_last_year, targets_added_this_year, total_fp_last_year, remaining_fp_last_year, fp_added_this_year) %>% mutate(target_dropoff =  total_targets_last_year - remaining_targets_last_year, fp_dropoff = total_fp_last_year - remaining_fp_last_year)
 
-#fill na columns 
+
+
 
 MASTER <- MASTER %>% left_join(target_dropoff, by = c("season", c("starting_team" = "starting_team")))
-MASTER <- MASTER %>% select(-remaining_targets_last_year, -total_targets_last_year)
+MASTER <- MASTER %>% select(-remaining_targets_last_year, -total_targets_last_year, -total_fp_last_year, -remaining_fp_last_year)
 
 ## DOUBLE CHECK THIS WORKS BEFORE PROCEEDING
 
 #if you're on a new team, subtract your targets last year from the teamwide "new targets added" column
 # THIS IS BROKEN SOMEHOW. NOT SURE HOW.
 MASTER$targets_added_this_year <- ifelse(MASTER$is_on_new_team == 1, MASTER$targets_added_this_year - MASTER$targets_ly, MASTER$targets_added_this_year)
+
+MASTER$fp_added_this_year <- ifelse(MASTER$is_on_new_team == 1,
+MASTER$fp_added_this_year - MASTER$total_pts_ly, MASTER$fp_added_this_year)
 
 ```
 
@@ -462,7 +466,7 @@ cluster_labels_te <- kmeans_model_te$cluster + 6
 complete_combine_wr$cluster <- cluster_labels_wr
 complete_combine_te$cluster <- cluster_labels_te
 
-#clusterbreakdown <- complete_combine %>% group_by(cluster) %>% summarize(mean_wt = mean(wt), mean_forty = mean(forty), mean_cone = mean(cone), mean_vertical = mean(vertical), mean_shuttle = mean(shuttle), mean_ht = mean(ht_in), count = n())
+clusterbreakdown <- complete_combine_wr %>% group_by(cluster) %>% summarize(mean_wt = mean(wt), mean_forty = mean(forty), mean_cone = mean(cone), mean_vertical = mean(vertical), mean_shuttle = mean(shuttle), mean_ht = mean(ht_in), count = n())
 
 
 # applying to "missing combine"
@@ -560,7 +564,14 @@ depth_charts <- load_depth_charts(seasons = c(2010:2023)) %>% filter(week == 1, 
 espn_qbr <- load_espn_qbr(league = "nfl", seasons = c(2010:2023), summary_type = "season") %>% filter(season_type == "Regular", qualified == "TRUE")
 
 espn_qbr <- espn_qbr %>% arrange(player_id, season) %>%
-  group_by(player_id) %>% mutate(starter_qbr_ly = lag(qbr_total, n=1)) %>% ungroup()
+  group_by(player_id) %>% mutate(starter_qbr_ly = lag(qbr_total, n=1),
+starter_epa_passing_ly = lag(pass, n=1), starter_total_snaps_ly = lag(qb_plays, n=1), starter_epa_persnap_passing_ly = starter_epa_passing_ly / starter_total_snaps_ly) %>% ungroup()
+
+
+
+# adjust epa_passing_ly by 17/16 if season was before 2022
+espn_qbr$starter_epa_passing_ly <- ifelse(espn_qbr$season < 2022, espn_qbr$starter_epa_passing_ly * (17/16), espn_qbr$starter_epa_passing_ly)
+
 
 # showing distribution of starter qbr
 ggplot(espn_qbr, aes(starter_qbr_ly)) + geom_density()
@@ -602,7 +613,7 @@ espn_qbr$qbr_ly_bin <- ifelse(is.na(espn_qbr$qbr_ly_bin), "no_history", espn_qbr
 # converting from number to string
 espn_qbr$qbr_ly_bin <- as.character(espn_qbr$qbr_ly_bin)
 
-espn_qbr <- espn_qbr %>% select(season, team_abb, starter_qbr_ly, qbr_ly_bin)
+espn_qbr <- espn_qbr %>% select(season, team_abb, starter_qbr_ly, qbr_ly_bin, starter_epa_persnap_passing_ly, starter_epa_passing_ly)
 
 MASTER <- MASTER %>% left_join(espn_qbr, by = c("season", c("starting_team" = "team_abb"))) %>% distinct()
 
@@ -610,15 +621,100 @@ MASTER <- MASTER %>% left_join(espn_qbr, by = c("season", c("starting_team" = "t
 summary(factor(MASTER$qbr_ly_bin))
 # fill all other na's with "other" for now
 MASTER$qbr_ly_bin <- ifelse(is.na(MASTER$qbr_ly_bin), "other", MASTER$qbr_ly_bin)
+
+# fill starter_epa_persnap_passing_ly and starter_epa_passing_ly with 0s
+MASTER$starter_epa_persnap_passing_ly[is.na(MASTER$starter_epa_persnap_passing_ly)] <- 0
+MASTER$starter_epa_passing_ly[is.na(MASTER$starter_epa_passing_ly)] <- 0
+
 ```
 
-```{r}
-# min season
 
-# CHECKING FOR NON ROOKIES
-#MASTER <- rookies
-# delete the line above ^^^ to include rookies
-## WHAT IF ITS ONLY WRS?
+
+
+```{r}
+# this chunk creates "team_fp_ly"
+qb_fantasy_pts <- load_player_stats(seasons = c(2010:2023)) %>% select(player_id, player_name, season, week, fantasy_points_ppr, recent_team, passing_yards, passing_tds) %>% group_by(season, recent_team) %>% summarize(total_passing_tds_ly = sum(passing_tds), total_passing_yds_ly = sum(passing_yards)) %>% mutate(total_passing_fp_ly = (total_passing_tds_ly * 4) + (total_passing_yds_ly / 25))  %>% mutate(season = season + 1)
+
+
+MASTER <- MASTER %>% left_join(qb_fantasy_pts, by = c(c("starting_team" = "recent_team"), "season"))
+
+
+```
+
+
+```{r}
+# get head coach info
+hcs <- read.csv("hcs_2000_to_2023.csv") %>% select(-X)
+
+# should all be 32.
+num_hcs_per_yr <- hcs %>% group_by(year) %>% summarize(num_hcs = n())
+
+hcs <- hcs %>% mutate(team = recode(team, 
+            "GNB" = "GB",
+            "STL" = "LA",
+            "KAN" = "KC",
+            "NOR" = "NO",
+            "SFO" = "SF",
+            "NWE" = "NE",
+            "OAK" = "LV",
+            "SDG" = "LAC",
+            "TAM" = "TB",
+            "LAR" = "LA",
+            "LVR" = "LV"))
+
+hcs <- hcs %>%
+  arrange(coach, team, year) %>%
+  mutate(is_returning_coach = ifelse(
+    coach == lag(coach) & team == lag(team) & year - 1 == lag(year),
+    1,
+    0
+  )) %>% group_by(coach, team) %>%
+  mutate(hc_years_with_team = row_number())
+
+
+# get rid of the one NA is_returning_coach
+hcs$is_returning_coach <- ifelse(is.na(hcs$is_returning_coach), 0, hcs$is_returning_coach)
+
+# join head coaches to master
+MASTER <- MASTER %>% left_join(hcs, by = c(c("season"="year"), c("starting_team"="team")))
+
+```
+
+
+```{r}
+
+is_old_nfl <- MASTER$season < 2021
+adjustment <- 17/16
+
+columns_to_adjust <- c('snap_games_played', 'total_targets', 'total_pts', 'total_wopr', 'total_rec', 'season_snaps')
+
+for (column in columns_to_adjust) {
+  MASTER[[column]] <- ifelse(is_old_nfl, MASTER[[column]] * adjustment, MASTER[[column]])
+}
+
+# doing the same adjustment but for last year
+ly_columns_to_adjust <- c("total_passing_tds_ly", "total_passing_fp_ly", "total_passing_yds_ly", "total_games_ly", "targets_ly", "total_snaps_ly", "total_pts_ly", "fp_added_this_year",
+"fp_dropoff", "targets_added_this_year", "target_dropoff"
+)
+
+is_old_nfl_ly <- MASTER$season < 2022
+
+for (column in ly_columns_to_adjust) {
+  MASTER[[column]] <- ifelse(is_old_nfl_ly, MASTER[[column]] * adjustment, MASTER[[column]])
+}
+
+# doing the same adjustment but for 2 years ago
+two_years_columns_to_adjust <- c("targets_2y", "total_games_2y")
+
+is_old_nfl_2y <- MASTER$season < 2023
+
+for (column in two_years_columns_to_adjust) {
+  MASTER[[column]] <- ifelse(is_old_nfl_2y, MASTER[[column]] * adjustment, MASTER[[column]])
+}
+
+
+# get rid of rookie clause:
+#MASTER <- MASTER %>% filter(years_pro == 0)
 #MASTER <- MASTER %>% filter(position == "WR")
 
 year_to_remove <- min(MASTER$season)
@@ -650,7 +746,8 @@ ctrl <- trainControl(method = "cv", number = 5)
 # )
 
 
-model <- train(points_per_game ~ points_ly + targets_pg_ly + wopr_pg_ly + pick + air_yards_pg_ly + total_games_ly  + pass_attempt_difference + position + total_positional_investment + target_dropoff + points_2y + total_games_2y + points_3y + total_games_3y + targets_pg_2y + targets_pg_3y + epa_pg_ly + years_pro + wopr_pg_2y + wopr_pg_3y + targets_added_this_year + is_on_new_team + combine_cluster + points_per_snap_ly + targets_per_snap_ly + wopr_per_snap_ly + total_snaps_ly  + qbr_ly_bin, data = trainData, 
+model <- train(points_per_game ~ points_pg_ly + targets_pg_ly + wopr_pg_ly + pick + air_yards_pg_ly + total_games_ly  + pass_attempt_difference  + total_positional_investment + target_dropoff + points_2y + total_games_2y + points_3y + total_games_3y + targets_pg_2y + targets_pg_3y + epa_pg_ly + years_pro + wopr_pg_2y + wopr_pg_3y + targets_added_this_year + is_on_new_team + points_per_snap_ly + targets_per_snap_ly + wopr_per_snap_ly + total_snaps_ly  + total_passing_tds_ly + total_passing_yds_ly + total_passing_fp_ly + is_returning_coach + hc_years_with_team + catch_rate_ly + position + fp_dropoff + starter_epa_passing_ly + starter_epa_persnap_passing_ly + combine_cluster + qbr_ly_bin, 
+               data = trainData, 
                method = "rf", trControl = ctrl
              #  , tuneGrid = custom_params
              )
@@ -684,14 +781,12 @@ gg <- ggplot(testData, aes(predicted, points_per_game, text = paste(pfr_player_n
 ggplotly(gg)
 print(results)
 
-
 #train vs test rmse
 # Calculate RMSE when is_testing == 1
 rmse_testing_1 <- sqrt(mean((post_ml_data$points_per_game[post_ml_data$is_testing == 1] - post_ml_data$predicted[post_ml_data$is_testing == 1])^2))
 
 # Calculate RMSE when is_testing == 0
 rmse_testing_0 <- sqrt(mean((post_ml_data$points_per_game[post_ml_data$is_testing == 0] - post_ml_data$predicted[post_ml_data$is_testing == 0])^2))
-
 rmse_testing_1  
 rmse_testing_0 
 
@@ -710,7 +805,11 @@ to_espn$predicted_ppg <- d2023_predictions
 #selecting only relevant columns for comparison:
 to_espn <- to_espn %>% select(predicted_ppg, player_id, pfr_player_name, starting_team, total_pts, points_per_game)
 
-espn_2023 <- espn_2023 %>% left_join(to_espn, by = c("gsis_id" = "player_id"))
+to_espn$our_residual <- to_espn$predicted_ppg - to_espn$points_per_game
+
+espn_2023 <- espn_2023 %>% left_join(to_espn, by = c("gsis_id" = "player_id")) %>% select(player, espn_ppg_projected, predicted_ppg, points_per_game, our_residual, position, gsis_id, starting_team, total_pts)
+
+
 
 # Calculate the squared differences
 squared_diff <- (espn_2023$points_per_game - espn_2023$espn_ppg_projected)^2
@@ -751,12 +850,24 @@ dalex_model <- explain(model = model,
                        y = MASTER$points_per_game,
                        predict_function = predict)
 
-# Step 4: Plot variable importance using DALEX
+
+
 plot(importance)
 
-
-prof <- model_profile(dalex_model, type = "accumulated", variable = "qbr_ly_bin")
+prof <- model_profile(dalex_model, type = "accumulated", variable = "points_pg_ly")
 plot(prof)
+
+#Examine interaction between num/cat or cat/cat variables (see variables in numerics and cats created above)
+
+profile_group <- model_profile(explainer = dalex_model,
+variables = c("starter_epa_passing_ly"), groups = "is_on_new_team", type = "partial") 
+plot(profile_group)
+
+# 
+profile_group <- model_profile(explainer = dalex_model,
+variables = c("pick"), groups = "position", type = "partial") 
+plot(profile_group)
+
 
 prof <- model_profile(dalex_model, type = "accumulated", variable = "combine_cluster")
 plot(prof)
@@ -774,6 +885,41 @@ edelman <- post_ml_data %>% filter(season == 2013, player_id == "00-0027150")
 e_breakdown <- predict_parts(explainer = dalex_model, edelman, type = "break_down")
 plot(e_breakdown)
 
+pitts <- d2023 %>% filter(player_id == "00-0036970")
+pitts_breakdown <- predict_parts(explainer = dalex_model, pitts, type = "break_down")
+plot(pitts_breakdown)
+
+
+
+
+
+addison <- d2023 %>% filter(player_id == "00-0038544")
+addison_breakdown <- predict_parts(explainer = dalex_model, addison, type = "break_down")
+plot(addison_breakdown)
+
+
+```
+
+
+```{r}
+# let's inspect how the resiudals behave as important variables change:
+
+# remove all years in testing when the player was hurt (total games < 2)
+testData <- testData %>% filter(total_games > 1)
+
+# 1: ppg LY
+ggplot(testData, aes(x=points_pg_ly, y = residual)) + geom_point() + geom_smooth()
+
+# 2: pick
+ggplot(testData, aes(x=pick, y = residual)) + geom_point() + geom_smooth()
+
+# 3: target dropoff
+ggplot(testData, aes(x=target_dropoff, y = residual)) + geom_point() + geom_smooth()
+
+# wopr pg ly
+# 1: ppg LY
+ggplot(testData, aes(x=wopr_pg_ly, y = residual)) + geom_point() + geom_smooth()
+
 
 
 ```
@@ -788,17 +934,11 @@ test2022 <- post_ml_data %>% filter(season == 2022, position == "WR")
 # biggest misses check: 
 testData$residual <- testData$points_per_game - testData$predicted
 
-a <- testData %>% arrange(desc(abs(residual))) %>% select(starting_team, pfr_player_name, season, points_per_game, predicted, residual, total_games, points_ly, player_id) %>% head(20)
+a <- testData %>% arrange(desc(abs(residual))) %>% select(starting_team, pfr_player_name, season, points_per_game, predicted, residual, total_games, points_pg_ly, player_id, years_pro) %>% head(20)
 
 b <- wrs %>% filter(player_id %in% a$player_id, season %in% a$season)
 ```
 
-
-```{r}
-# investigating 2013 edelman
-
-
-```
 
 ```{r}
 # investigating michael thomas vs garret wilson
@@ -807,7 +947,7 @@ b <- wrs %>% filter(player_id %in% a$player_id, season %in% a$season)
 # but MT was proj 7 and GW only projected 3. why?
 # MT = 00-0032765
 # GW = 00-0037740
-mt_vs_gw <- MASTER %>% filter((player_id == "00-0037740" & season == 2022) | (player_id == "00-0032765" & season == 2016))
+mt_vs_gw <- post_ml_data %>% filter((player_id == "00-0037740" & season == 2022) | (player_id == "00-0032765" & season == 2016))
 #why tf was garrett wilson undrafted?????
 
 ```
@@ -828,6 +968,52 @@ no2021 <- MASTER %>% filter(season == 2022, points_from_last_year == 0)
 ```
 
 
+```{r}
+# Install and load the necessary library
+library(rvest)
+
+
+years_to_scrape <- as.character(seq(2000, 2023))
+
+# List to store the data for each year
+all_coaching_data_2 <- list()
+
+# Loop through each year
+for (year in years_to_scrape) {
+  # Create the URL for the current year
+  current_url <- paste0("https://www.pro-football-reference.com/years/", year, "/coaches.htm")
+  
+  # Read the HTML content from the current URL
+  page <- read_html(current_url)
+  
+  # Extract and store the coaching data for the current year
+  coaching_data <- page %>%
+    html_table(header = TRUE) %>%
+    .[[1]]
+  
+        # fixing column names
+  colnames(coaching_data)[1] <- "coach"
+  colnames(coaching_data)[2] <- "team"
+  colnames(coaching_data)[3] <- "games_this_year"
+  colnames(coaching_data)[7] <- "total_games_coached"
+  
+  coaching_data <- coaching_data %>% select(coach, team, games_this_year, total_games_coached) %>% filter(coach != "Coach")
+  
+  all_coaching_data_2[[year]] <- coaching_data
+
+}
+
+# Assuming all_coaching_data is your list of data frames
+combined_data <- bind_rows(all_coaching_data, .id = "year") %>%
+  mutate(year = as.integer(year)) 
+
+# need to get only the head coaches
+result <- combined_data %>%
+  group_by(team, year) %>%
+  slice(which.max(total_games_coached)) %>% ungroup() %>% arrange(total_games_coached)
+
+
+```
 
 
 ```{r}
