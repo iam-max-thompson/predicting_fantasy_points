@@ -734,7 +734,7 @@ trainData <- MASTER[trainIndex, ]
 testData <- MASTER[-trainIndex, ]
 
 # Create a train control object for 5-fold cross-validation
-ctrl <- trainControl(method = "cv", number = 5)
+ctrl <- trainControl(method = "cv", number = 8)
 
 # custom_params <- expand.grid(
 #   nrounds = c(100),         # Number of boosting rounds
