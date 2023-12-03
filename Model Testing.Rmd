@@ -19,6 +19,7 @@ master <- read.csv("~/Grad School/BZAN 542 - Liu/MASTER.csv")
 current_season <- read.csv("~/Grad School/BZAN 542 - Liu/2023_data.csv")
 
 
+master <- filter(master, season >= 2014)
 # master$pick <- cut(master$pick,breaks = seq(0,400,by=32))
 # master$pick <- ifelse(master$pick == "(288,320]","Undrafted",master$pick)
 # 
@@ -172,7 +173,7 @@ XGB_FULL <- train(points_per_game ~ points_pg_ly + targets_pg_ly + wopr_pg_ly + 
                total_passing_tds_ly + total_passing_yds_ly + total_passing_fp_ly + 
                is_returning_coach + hc_years_with_team + catch_rate_ly + position + fp_dropoff +
                starter_epa_passing_ly + starter_epa_persnap_passing_ly + combine_cluster +
-               qbr_ly_bin,
+               qbr_ly_bin + points_2y + wopr_pg_2y + targets_pg_2y + total_games_2y,
              data=master,
              method="xgbTree",
              tuneGrid=expand.grid(nrounds = 100,
@@ -205,7 +206,7 @@ DALEX for Xgboost
 ```{r}
 y_train <- master$points_per_game
 
-points_explainer <- DALEX::explain(XGB_FULL, data = master[,-c(1,42,43)], y = y_train)
+points_explainer <- DALEX::explain(XGB_FULL, data = master, y = y_train)
 
 points_parts <- model_parts(points_explainer)
 points_profile <- model_profile(points_explainer, type = "accumulated")
@@ -217,12 +218,88 @@ plot(points_profile, variables = "pick")
 
 prediction_breakdown <- predict_parts(
   explainer = points_explainer,
-  new_observation = master[sample(1:nrow(master)), ],
+  new_observation = master[353, ],
   type = "break_down"
 )
 
 plot(prediction_breakdown)
 ```
+
+GLMNET
+
+```{r}
+alpha <- seq(0,1,by=0.1)
+lambda <- seq(-3,0,by=0.5)
+
+GLM <- train(points_per_game ~ points_pg_ly + targets_pg_ly + wopr_pg_ly + pick + air_yards_pg_ly +
+               total_games_ly  + pass_attempt_difference  + total_positional_investment +
+               target_dropoff + epa_pg_ly + years_pro + targets_added_this_year + is_on_new_team +
+               points_per_snap_ly + targets_per_snap_ly + wopr_per_snap_ly + total_snaps_ly  +
+               total_passing_tds_ly + total_passing_yds_ly + total_passing_fp_ly + 
+               is_returning_coach + hc_years_with_team + catch_rate_ly + position + fp_dropoff +
+               starter_epa_passing_ly + starter_epa_persnap_passing_ly + combine_cluster +
+               qbr_ly_bin,
+             data=train,
+             method="glmnet",
+             tuneGrid=expand.grid(alpha = alpha,
+                                  lambda = lambda),
+             metric="RMSE",
+             verbose=FALSE,
+             trControl=ctrl)
+
+GLM$bestTune
+
+train$prediction <- predict(GLM, newdata = train)
+train$dif <- train$points_per_game - train$prediction
+
+test$prediction <- predict(GLM, newdata = test)
+test$dif <- test$points_per_game - test$prediction
+
+current_season$prediction <- predict(GLM, newdata = current_season)
+current_season$dif <- current_season$points_per_game - current_season$prediction
+
+# Train RMSE
+sqrt(mean((train$dif)^2))
+# Test RMSE
+sqrt(mean((test$dif)^2))
+# 2023 RMSE
+sqrt(mean((current_season$dif)^2))
+```
+
+FULL GLMNET
+
+```{r}
+GLM_FULL <- train(points_per_game ~ points_pg_ly + targets_pg_ly + wopr_pg_ly + pick + air_yards_pg_ly +
+               total_games_ly  + pass_attempt_difference  + total_positional_investment +
+               target_dropoff + epa_pg_ly + years_pro + targets_added_this_year + is_on_new_team +
+               points_per_snap_ly + targets_per_snap_ly + wopr_per_snap_ly + total_snaps_ly  +
+               total_passing_tds_ly + total_passing_yds_ly + total_passing_fp_ly + 
+               is_returning_coach + hc_years_with_team + catch_rate_ly + position + fp_dropoff +
+               starter_epa_passing_ly + starter_epa_persnap_passing_ly + combine_cluster +
+               qbr_ly_bin,
+             data=master,
+             method="glmnet",
+             tuneGrid=expand.grid(alpha = 0.5,
+                                  lambda = 0),
+             metric="RMSE",
+             verbose=FALSE,
+             trControl=ctrl)
+
+GLM$bestTune
+
+master$prediction <- predict(GLM_FULL, newdata = master)
+master$dif <- master$points_per_game - master$prediction
+
+# vs current season
+current_season$prediction <- predict(GLM_FULL, newdata = current_season)
+current_season$dif <- current_season$points_per_game - current_season$prediction
+
+# Full data train
+sqrt(mean((master$dif)^2))
+# 2023 test
+sqrt(mean((current_season$dif)^2))
+```
+
 
 Random Forest Testing
 
