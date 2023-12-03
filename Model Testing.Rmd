@@ -17,6 +17,13 @@ library(gbm)
 
 master <- read.csv("~/Grad School/BZAN 542 - Liu/MASTER.csv")
 current_season <- read.csv("~/Grad School/BZAN 542 - Liu/2023_data.csv")
+
+
+# master$pick <- cut(master$pick,breaks = seq(0,400,by=32))
+# master$pick <- ifelse(master$pick == "(288,320]","Undrafted",master$pick)
+# 
+# current_season$pick <- cut(current_season$pick,breaks = seq(0,400,by=32))
+# current_season$pick <- ifelse(current_season$pick == "(288,320]","Undrafted",current_season$pick)
 ```
 
 Train, Test, CV
@@ -108,7 +115,7 @@ XGB Tuning
 
 ```{r}
 nrounds <- seq(50, 150, by = 50)
-max_depth <- seq(3, 5, by = 1)
+max_depth <- seq(2, 3, by = 1)
 eta <- seq(0, 0.1, by = 0.05)
 gamma <- seq(0, 1, by = 0.5)
 colsample_bytree <- seq(0.5, 1, by = 0.5)
@@ -169,7 +176,7 @@ XGB_FULL <- train(points_per_game ~ points_pg_ly + targets_pg_ly + wopr_pg_ly + 
              data=master,
              method="xgbTree",
              tuneGrid=expand.grid(nrounds = 100,
-                                  max_depth = 4,
+                                  max_depth = 3,
                                   eta = 0.05,
                                   gamma = 0.5,
                                   colsample_bytree = 0.5,
@@ -179,11 +186,42 @@ XGB_FULL <- train(points_per_game ~ points_pg_ly + targets_pg_ly + wopr_pg_ly + 
              verbose=FALSE,
              trControl=ctrl)
 
+
+master$prediction <- predict(XGB_FULL, newdata = master)
+master$dif <- master$points_per_game - master$prediction
+
 # vs current season
 current_season$prediction <- predict(XGB_FULL, newdata = current_season)
 current_season$dif <- current_season$points_per_game - current_season$prediction
 
+# Full data train
+sqrt(mean((master$dif)^2))
+# 2023 test
 sqrt(mean((current_season$dif)^2))
+```
+
+DALEX for Xgboost
+
+```{r}
+y_train <- master$points_per_game
+
+points_explainer <- DALEX::explain(XGB_FULL, data = master[,-c(1,42,43)], y = y_train)
+
+points_parts <- model_parts(points_explainer)
+points_profile <- model_profile(points_explainer, type = "accumulated")
+
+plot(points_parts)
+
+plot(points_profile, variables = "pick")
+
+
+prediction_breakdown <- predict_parts(
+  explainer = points_explainer,
+  new_observation = master[sample(1:nrow(master)), ],
+  type = "break_down"
+)
+
+plot(prediction_breakdown)
 ```
 
 Random Forest Testing
