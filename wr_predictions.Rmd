@@ -316,9 +316,7 @@ wr_by_yr <- wrs %>%
             fantasy_pts = sum(fantasy_points_ppr),
             final_team = recent_team[which.max(week)],
             starting_team = recent_team[which.min(week)]) %>%
-  mutate(targets = ifelse(season < 2021, targets * 17/16, targets),
-         fantasy_pts = ifelse(season < 2021, fantasy_pts * 17/16, fantasy_pts)) %>%
-  arrange(player_id, season, final_team) %>%  # Sort the data for correct lagging
+  arrange(player_id, season) %>%  # Sort the data for correct lagging
   mutate(targets_same_team_last_year = ifelse(
     player_id == lag(player_id) & starting_team == lag(final_team) & season == lag(season) + 1,
     lag(targets),
@@ -341,14 +339,16 @@ wr_by_yr <- wrs %>%
   )
   )
 
-tm_targets_remaining <- wr_by_yr %>% group_by(starting_team, season) %>% summarize(remaining_targets_last_year = sum(targets_same_team_last_year, na.rm = T), targets_added_this_year = sum(targets_for_new_team, na.rm = T),
+wr_by_yr$targets_same_team_last_year <- ifelse(is.na(wr_by_yr$targets_same_team_last_year), 0, wr_by_yr$targets_same_team_last_year)
+
+tm_targets_remaining <- wr_by_yr %>% group_by(starting_team, season) %>% summarize(remaining_targets_last_year = sum(targets_same_team_last_year), targets_added_this_year = sum(targets_for_new_team, na.rm = T),
 remaining_fp_last_year = sum(fp_same_team_last_year, na.rm = T),
 fp_added_this_year = sum(fp_for_new_team, na.rm = T))
 
 #  the ty montgomery rule: subtract 120 fantasy points from the 2017 packers
-tm_targets_remaining <- tm_targets_remaining %>% mutate(remaining_fp_last_year = ifelse(starting_team == "GB" & season == 2016, 940, tm_targets_remaining$remaining_fp_last_year))
+tm_targets_remaining <- tm_targets_remaining %>% mutate(remaining_fp_last_year = ifelse(starting_team == "GB" & season == 2016, 940, remaining_fp_last_year))
 
-tm_targets_remaining <- tm_targets_remaining %>% mutate(remaining_targets_last_year = ifelse(starting_team == "GB" & season == 2016, 510, tm_targets_remaining$remaining_targets_last_year))
+tm_targets_remaining <- tm_targets_remaining %>% mutate(remaining_targets_last_year = ifelse(starting_team == "GB" & season == 2016, 510, remaining_targets_last_year))
 
 
 
@@ -791,6 +791,23 @@ rmse_testing_1 <- sqrt(mean((post_ml_data$points_per_game[post_ml_data$is_testin
 rmse_testing_0 <- sqrt(mean((post_ml_data$points_per_game[post_ml_data$is_testing == 0] - post_ml_data$predicted[post_ml_data$is_testing == 0])^2))
 rmse_testing_1  
 rmse_testing_0 
+
+```
+
+
+```{r}
+# scatterplot of points per game ly vs this year, no rookies
+to_plot <- MASTER %>% filter(years_pro > 0)
+
+ggplot(to_plot, aes(x = points_pg_ly, y = points_per_game)) + 
+  geom_point(size = 2, alpha = 0.7) +
+  geom_smooth(method = "lm", se = FALSE, lwd = 2) +
+  labs(x = "Points per Game Last Year", y = "Points Per Game") +
+  theme(axis.title = element_text(size = 14))  # Adjust the size (you can change '14' to your desired size)
+
+M <- lm(points_per_game ~ points_pg_ly, data = to_plot)
+summary(M)
+
 
 ```
 
