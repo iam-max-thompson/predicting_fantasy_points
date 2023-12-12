@@ -387,7 +387,7 @@ non_rookies <- MASTER %>%
 drafted_rookies <- rookies %>% filter(pick < 300)
 ggplot(drafted_rookies, aes(x = pick, y = points_per_game, color = position)) + geom_point() + geom_smooth()
 
-ggplot(rookies, aes(x=factor(round), y = points_per_game)) + geom_violin()
+ggplot(rookies, aes(x=factor(round), y = points_per_game)) + geom_boxplot()
 
 ```
 
@@ -545,6 +545,13 @@ missing_combine_te$cluster <- assignments_te$cluster + 6
 #missing_combine_breakdown <- missing_combine %>% group_by(cluster) %>% summarize(mean_wt = mean(wt, na.rm=T), mean_forty = mean(forty, na.rm=T), mean_cone = mean(cone,na.rm=T), mean_vertical = mean(vertical, na.rm=T), mean_shuttle = mean(shuttle, na.rm=T), mean_ht = mean(ht_in, na.rm=T))
 
 full_combine_clustered <- rbind(missing_combine_wr, complete_combine_wr, missing_combine_te, complete_combine_te) %>% rename(combine_cluster = cluster) %>% select(combine_cluster, gsis_id, pfr_id)
+
+
+# understanding the clusters
+cluster_breakdown <- complete_combine_wr %>% group_by(cluster) %>% summarize(avg_weight = round(mean(wt),0), avg_height = round(mean(ht_in),1), avg_forty = round(mean(forty),2), avg_vertical = round(mean(vertical),1), avg_shuttle = round(mean(shuttle),2))
+
+#write.csv(cluster_breakdown, "cluster_breakdown.csv")
+
 ```
 
 ```{r}
