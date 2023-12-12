@@ -79,6 +79,7 @@ Player performance is measured in fantasy points per game for a single player fo
 
 ```{r, eval = FALSE}
 Fantasy Points = 1 * catches + 0.1 * receiving_yards + 6 * receiving_touchdowns + 0.1 * rushing_yards + 6 * rushing_touchdowns + 2 * fumbles_lost
+# test
 ```
 
 In other words, pass catchers that catch more passes, for more yards and for more touchdowns will score more fantasy points than those who don't.
