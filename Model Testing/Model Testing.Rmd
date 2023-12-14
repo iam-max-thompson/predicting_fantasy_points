@@ -1,0 +1,408 @@
+---
+title: "Project Stuff"
+author: "Balin Allred"
+date: "2023-12-02"
+output: html_document
+---
+
+Data and Packages
+
+```{r}
+library(dplyr)
+library(xgboost)
+library(DALEX)
+library(glmnet)
+library(caret)
+library(gbm)
+
+master <- read.csv("~/Grad School/BZAN 542 - Liu/MASTER.csv")
+current_season <- read.csv("~/Grad School/BZAN 542 - Liu/2023_data.csv")
+
+
+master <- filter(master, season >= 2014)
+# master$pick <- cut(master$pick,breaks = seq(0,400,by=32))
+# master$pick <- ifelse(master$pick == "(288,320]","Undrafted",master$pick)
+# 
+# current_season$pick <- cut(current_season$pick,breaks = seq(0,400,by=32))
+# current_season$pick <- ifelse(current_season$pick == "(288,320]","Undrafted",current_season$pick)
+```
+
+Train, Test, CV
+
+```{r}
+train_rows <- sample(nrow(master),round(nrow(master)*0.7,1),replace = FALSE)
+
+train <- master[train_rows,]
+test <- master[-train_rows,]
+
+ctrl <- trainControl(method = "cv", number = 5)
+```
+
+Hyperparameter Tuning for GBM
+
+```{r}
+trees <- seq(from=50,to=300,by=50)
+interaction_d <- seq(from=5,to=7,by=1)
+minobsinnode <- seq(from=7,to=12,by=1)
+shrinkgage <- seq(from=0.02,to=0.06,by=0.01)
+
+
+GBM <- train(points_per_game ~ points_pg_ly + targets_pg_ly + wopr_pg_ly + pick + air_yards_pg_ly +
+               total_games_ly  + pass_attempt_difference  + total_positional_investment +
+               target_dropoff + epa_pg_ly + years_pro + targets_added_this_year + is_on_new_team +
+               points_per_snap_ly + targets_per_snap_ly + wopr_per_snap_ly + total_snaps_ly  +
+               total_passing_tds_ly + total_passing_yds_ly + total_passing_fp_ly + 
+               is_returning_coach + hc_years_with_team + catch_rate_ly + position + fp_dropoff +
+               starter_epa_passing_ly + starter_epa_persnap_passing_ly + combine_cluster +
+               qbr_ly_bin,
+             data=train,
+             method="gbm",
+             tuneGrid=expand.grid(n.trees = trees, 
+                                   interaction.depth = interaction_d, 
+                                   n.minobsinnode = minobsinnode, 
+                                   shrinkage = shrinkgage),
+             metric="RMSE",
+             verbose=FALSE,
+             trControl=ctrl)
+
+GBM$bestTune
+
+train$prediction <- predict(GBM, newdata = train)
+train$dif <- train$points_per_game - train$prediction
+
+test$prediction <- predict(GBM, newdata = test)
+test$dif <- test$points_per_game - test$prediction
+
+current_season$prediction <- predict(GBM, newdata = current_season)
+current_season$dif <- current_season$points_per_game - current_season$prediction
+
+# Train RMSE
+sqrt(mean((train$dif)^2))
+# Test RMSE
+sqrt(mean((test$dif)^2))
+# 2023 RMSE
+sqrt(mean((current_season$dif)^2))
+```
+
+Retraining on all available data with best hyperparams
+
+```{r}
+GBM_FULL <- train(points_per_game ~ points_pg_ly + targets_pg_ly + wopr_pg_ly + pick + air_yards_pg_ly +
+               total_games_ly  + pass_attempt_difference  + total_positional_investment +
+               target_dropoff + epa_pg_ly + years_pro + targets_added_this_year + is_on_new_team +
+               points_per_snap_ly + targets_per_snap_ly + wopr_per_snap_ly + total_snaps_ly  +
+               total_passing_tds_ly + total_passing_yds_ly + total_passing_fp_ly + 
+               is_returning_coach + hc_years_with_team + catch_rate_ly + position + fp_dropoff +
+               starter_epa_passing_ly + starter_epa_persnap_passing_ly + combine_cluster +
+               qbr_ly_bin,
+             data=master,
+             method="gbm",
+             tuneGrid=expand.grid(n.trees = 100, 
+                                   interaction.depth = 6, 
+                                   n.minobsinnode = 10, 
+                                   shrinkage = 0.04),
+             metric="RMSE",
+             verbose=FALSE,
+             trControl=ctrl)
+
+# vs current season
+current_season$prediction <- predict(GBM_FULL, newdata = current_season)
+current_season$dif <- current_season$points_per_game - current_season$prediction
+
+sqrt(mean((current_season$dif)^2))
+```
+
+XGB Tuning
+
+```{r}
+nrounds <- seq(50, 150, by = 50)
+max_depth <- seq(2, 3, by = 1)
+eta <- seq(0, 0.1, by = 0.05)
+gamma <- seq(0, 1, by = 0.5)
+colsample_bytree <- seq(0.5, 1, by = 0.5)
+min_child_weight <- seq(1, 10, by = 3)
+subsample <- seq(0.8, 1, by = 0.1)
+
+XGB <- train(points_per_game ~ points_pg_ly + targets_pg_ly + wopr_pg_ly + pick + air_yards_pg_ly +
+               total_games_ly  + pass_attempt_difference  + total_positional_investment +
+               target_dropoff + epa_pg_ly + years_pro + targets_added_this_year + is_on_new_team +
+               points_per_snap_ly + targets_per_snap_ly + wopr_per_snap_ly + total_snaps_ly  +
+               total_passing_tds_ly + total_passing_yds_ly + total_passing_fp_ly + 
+               is_returning_coach + hc_years_with_team + catch_rate_ly + position + fp_dropoff +
+               starter_epa_passing_ly + starter_epa_persnap_passing_ly + combine_cluster +
+               qbr_ly_bin,
+             data=train,
+             method="xgbTree",
+             tuneGrid=expand.grid(nrounds = nrounds,
+                                  max_depth = max_depth,
+                                  eta = eta,
+                                  gamma = gamma,
+                                  colsample_bytree = colsample_bytree,
+                                  min_child_weight = min_child_weight,
+                                  subsample = subsample),
+             metric="RMSE",
+             verbose=FALSE,
+             trControl=ctrl)
+
+XGB$bestTune
+
+train$prediction <- predict(XGB, newdata = train)
+train$dif <- train$points_per_game - train$prediction
+
+test$prediction <- predict(XGB, newdata = test)
+test$dif <- test$points_per_game - test$prediction
+
+current_season$prediction <- predict(XGB, newdata = current_season)
+current_season$dif <- current_season$points_per_game - current_season$prediction
+
+# Train RMSE
+sqrt(mean((train$dif)^2))
+# Test RMSE
+sqrt(mean((test$dif)^2))
+# 2023 RMSE
+sqrt(mean((current_season$dif)^2))
+```
+
+Full XGB
+
+```{r}
+XGB_FULL <- train(points_per_game ~ points_pg_ly + targets_pg_ly + wopr_pg_ly + pick + air_yards_pg_ly +
+               total_games_ly  + pass_attempt_difference  + total_positional_investment +
+               target_dropoff + epa_pg_ly + years_pro + targets_added_this_year + is_on_new_team +
+               points_per_snap_ly + targets_per_snap_ly + wopr_per_snap_ly + total_snaps_ly  +
+               total_passing_tds_ly + total_passing_yds_ly + total_passing_fp_ly + 
+               is_returning_coach + hc_years_with_team + catch_rate_ly + position + fp_dropoff +
+               starter_epa_passing_ly + starter_epa_persnap_passing_ly + combine_cluster +
+               qbr_ly_bin + points_2y + wopr_pg_2y + targets_pg_2y + total_games_2y,
+             data=master,
+             method="xgbTree",
+             tuneGrid=expand.grid(nrounds = 100,
+                                  max_depth = 3,
+                                  eta = 0.05,
+                                  gamma = 0.5,
+                                  colsample_bytree = 0.5,
+                                  min_child_weight = 10,
+                                  subsample = 0.8),
+             metric="RMSE",
+             verbose=FALSE,
+             trControl=ctrl)
+
+
+master$prediction <- predict(XGB_FULL, newdata = master)
+master$dif <- master$points_per_game - master$prediction
+
+# vs current season
+current_season$prediction <- predict(XGB_FULL, newdata = current_season)
+current_season$dif <- current_season$points_per_game - current_season$prediction
+
+# Full data train
+sqrt(mean((master$dif)^2))
+# 2023 test
+sqrt(mean((current_season$dif)^2))
+```
+
+DALEX for Xgboost
+
+```{r}
+y_train <- master$points_per_game
+
+points_explainer <- DALEX::explain(XGB_FULL, data = master, y = y_train)
+
+points_parts <- model_parts(points_explainer)
+points_profile <- model_profile(points_explainer, type = "accumulated")
+
+plot(points_parts)
+
+plot(points_profile, variables = "pick")
+
+
+prediction_breakdown <- predict_parts(
+  explainer = points_explainer,
+  new_observation = master[353, ],
+  type = "break_down"
+)
+
+plot(prediction_breakdown)
+```
+
+GLMNET
+
+```{r}
+alpha <- seq(0,1,by=0.1)
+lambda <- seq(-3,0,by=0.5)
+
+GLM <- train(points_per_game ~ points_pg_ly + targets_pg_ly + wopr_pg_ly + pick + air_yards_pg_ly +
+               total_games_ly  + pass_attempt_difference  + total_positional_investment +
+               target_dropoff + epa_pg_ly + years_pro + targets_added_this_year + is_on_new_team +
+               points_per_snap_ly + targets_per_snap_ly + wopr_per_snap_ly + total_snaps_ly  +
+               total_passing_tds_ly + total_passing_yds_ly + total_passing_fp_ly + 
+               is_returning_coach + hc_years_with_team + catch_rate_ly + position + fp_dropoff +
+               starter_epa_passing_ly + starter_epa_persnap_passing_ly + combine_cluster +
+               qbr_ly_bin,
+             data=train,
+             method="glmnet",
+             tuneGrid=expand.grid(alpha = alpha,
+                                  lambda = lambda),
+             metric="RMSE",
+             verbose=FALSE,
+             trControl=ctrl)
+
+GLM$bestTune
+
+train$prediction <- predict(GLM, newdata = train)
+train$dif <- train$points_per_game - train$prediction
+
+test$prediction <- predict(GLM, newdata = test)
+test$dif <- test$points_per_game - test$prediction
+
+current_season$prediction <- predict(GLM, newdata = current_season)
+current_season$dif <- current_season$points_per_game - current_season$prediction
+
+# Train RMSE
+sqrt(mean((train$dif)^2))
+# Test RMSE
+sqrt(mean((test$dif)^2))
+# 2023 RMSE
+sqrt(mean((current_season$dif)^2))
+```
+
+FULL GLMNET
+
+```{r}
+GLM_FULL <- train(points_per_game ~ points_pg_ly + targets_pg_ly + wopr_pg_ly + pick + air_yards_pg_ly +
+               total_games_ly  + pass_attempt_difference  + total_positional_investment +
+               target_dropoff + epa_pg_ly + years_pro + targets_added_this_year + is_on_new_team +
+               points_per_snap_ly + targets_per_snap_ly + wopr_per_snap_ly + total_snaps_ly  +
+               total_passing_tds_ly + total_passing_yds_ly + total_passing_fp_ly + 
+               is_returning_coach + hc_years_with_team + catch_rate_ly + position + fp_dropoff +
+               starter_epa_passing_ly + starter_epa_persnap_passing_ly + combine_cluster +
+               qbr_ly_bin,
+             data=master,
+             method="glmnet",
+             tuneGrid=expand.grid(alpha = 0.5,
+                                  lambda = 0),
+             metric="RMSE",
+             verbose=FALSE,
+             trControl=ctrl)
+
+GLM$bestTune
+
+master$prediction <- predict(GLM_FULL, newdata = master)
+master$dif <- master$points_per_game - master$prediction
+
+# vs current season
+current_season$prediction <- predict(GLM_FULL, newdata = current_season)
+current_season$dif <- current_season$points_per_game - current_season$prediction
+
+# Full data train
+sqrt(mean((master$dif)^2))
+# 2023 test
+sqrt(mean((current_season$dif)^2))
+```
+
+
+Random Forest Testing
+
+```{r}
+mtry <- seq(2, 10, by=1)  
+
+RF <- train(points_per_game ~ points_pg_ly + targets_pg_ly + wopr_pg_ly + pick + air_yards_pg_ly +
+               total_games_ly  + pass_attempt_difference  + total_positional_investment +
+               target_dropoff + epa_pg_ly + years_pro + targets_added_this_year + is_on_new_team +
+               points_per_snap_ly + targets_per_snap_ly + wopr_per_snap_ly + total_snaps_ly  +
+               total_passing_tds_ly + total_passing_yds_ly + total_passing_fp_ly + 
+               is_returning_coach + hc_years_with_team + catch_rate_ly + position + fp_dropoff +
+               starter_epa_passing_ly + starter_epa_persnap_passing_ly + combine_cluster +
+               qbr_ly_bin,
+             data = train,
+             method = "rf",
+             tuneGrid = expand.grid(mtry = mtry),
+             metric = "RMSE",
+             verbose = FALSE,
+             trControl = ctrl)
+
+RF$bestTune
+
+train$prediction <- predict(RF, newdata = train)
+train$dif <- train$points_per_game - train$prediction
+
+test$prediction <- predict(RF, newdata = test)
+test$dif <- test$points_per_game - test$prediction
+
+current_season$prediction <- predict(RF, newdata = current_season)
+current_season$dif <- current_season$points_per_game - current_season$prediction
+
+# Train RMSE
+sqrt(mean((train$dif)^2))
+# Test RMSE
+sqrt(mean((test$dif)^2))
+# 2023 RMSE
+sqrt(mean((current_season$dif)^2))
+```
+
+Full RF
+
+```{r}
+RF_FULL <- train(points_per_game ~ points_pg_ly + targets_pg_ly + wopr_pg_ly + pick + air_yards_pg_ly +
+               total_games_ly  + pass_attempt_difference  + total_positional_investment +
+               target_dropoff + epa_pg_ly + years_pro + targets_added_this_year + is_on_new_team +
+               points_per_snap_ly + targets_per_snap_ly + wopr_per_snap_ly + total_snaps_ly  +
+               total_passing_tds_ly + total_passing_yds_ly + total_passing_fp_ly + 
+               is_returning_coach + hc_years_with_team + catch_rate_ly + position + fp_dropoff +
+               starter_epa_passing_ly + starter_epa_persnap_passing_ly + combine_cluster +
+               qbr_ly_bin,
+             data=master,
+             method="rf",
+             tuneGrid=expand.grid(mtry=8),
+             metric="RMSE",
+             verbose=FALSE,
+             trControl=ctrl)
+
+# vs current season
+current_season$prediction <- predict(RF_FULL, newdata = current_season)
+current_season$dif <- current_season$points_per_game - current_season$prediction
+
+sqrt(mean((current_season$dif)^2))
+```
+
+Neural Net Testing
+
+```{r}
+size <- seq(1, 5, by = 1)  
+decay <- c(0.1,0.01,0.001,0.0001)
+
+NNET <- train(points_per_game ~ points_pg_ly + targets_pg_ly + wopr_pg_ly + pick + air_yards_pg_ly +
+               total_games_ly  + pass_attempt_difference  + total_positional_investment +
+               target_dropoff + epa_pg_ly + years_pro + targets_added_this_year + is_on_new_team +
+               points_per_snap_ly + targets_per_snap_ly + wopr_per_snap_ly + total_snaps_ly  +
+               total_passing_tds_ly + total_passing_yds_ly + total_passing_fp_ly + 
+               is_returning_coach + hc_years_with_team + catch_rate_ly + position + fp_dropoff +
+               starter_epa_passing_ly + starter_epa_persnap_passing_ly + combine_cluster +
+               qbr_ly_bin,
+             data = train,
+             method = "nnet",
+             tuneGrid = expand.grid(size = size,
+                                    decay = decay),
+             metric = "RMSE",
+             trace = FALSE,
+             trControl = ctrl)
+
+NNET$bestTune
+
+train$prediction <- predict(NNET, newdata = train)
+train$dif <- train$points_per_game - train$prediction
+
+test$prediction <- predict(NNET, newdata = test)
+test$dif <- test$points_per_game - test$prediction
+
+current_season$prediction <- predict(NNET, newdata = current_season)
+current_season$dif <- current_season$points_per_game - current_season$prediction
+
+# Train RMSE
+sqrt(mean((train$dif)^2))
+# Test RMSE
+sqrt(mean((test$dif)^2))
+# 2023 RMSE
+sqrt(mean((current_season$dif)^2))
+```
+

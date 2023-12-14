@@ -1,0 +1,245 @@
+---
+title: "New Models For Environment"
+author: "Balin Allred"
+date: "2023-12-14"
+output: html_document
+---
+
+Data and Packages
+
+```{r}
+library(dplyr)
+library(xgboost)
+library(DALEX)
+library(glmnet)
+library(caret)
+library(gbm)
+library(knitr)
+
+load("~/Grad School/BZAN 542 - Liu/All_models_workspace.RData")
+
+master <- read.csv("~/Grad School/BZAN 542 - Liu/MASTER2.csv")
+current_season <- read.csv("~/Grad School/BZAN 542 - Liu/2023_data2.csv")
+```
+
+Train, Test, CV
+
+```{r}
+set.seed(2023)
+
+train_rows <- sample(nrow(master),round(nrow(master)*0.7,1),replace = FALSE)
+
+train <- master[train_rows,]
+test <- master[-train_rows,]
+
+ctrl <- trainControl(method = "cv", number = 5)
+```
+
+GBM
+
+```{r}
+trees <- seq(from=50,to=150,by=50)
+interaction_d <- seq(from=5,to=7,by=1)
+minobsinnode <- seq(from=8,to=10,by=1)
+shrinkgage <- seq(from=0.03,to=0.05,by=0.01)
+
+
+GBM <- train(points_per_game ~ points_pg_ly + targets_pg_ly + wopr_pg_ly + pick + air_yards_pg_ly +
+               total_games_ly  + pass_attempt_difference  + total_positional_investment +
+               target_dropoff + epa_pg_ly + years_pro + targets_added_this_year + is_on_new_team +
+               points_per_snap_ly + targets_per_snap_ly + wopr_per_snap_ly + total_snaps_ly  +
+               total_passing_tds_ly + total_passing_yds_ly + total_passing_fp_ly + 
+               is_returning_coach + hc_years_with_team + catch_rate_ly + position + fp_dropoff +
+               starter_epa_passing_ly + starter_epa_persnap_passing_ly + combine_cluster +
+               qbr_ly_bin,
+             data=train,
+             method="gbm",
+             tuneGrid=expand.grid(n.trees = trees, 
+                                   interaction.depth = interaction_d, 
+                                   n.minobsinnode = minobsinnode, 
+                                   shrinkage = shrinkgage),
+             metric="RMSE",
+             verbose=FALSE,
+             trControl=ctrl)
+
+
+test$prediction_GBM <- predict(GBM, newdata = test)
+test$dif_GBM <- test$points_per_game - test$prediction_GBM
+
+GBM$results[rownames(GBM$bestTune),c(5,8)]
+
+# Test RMSE
+sqrt(mean((test$dif_GBM)^2))
+```
+
+XGB
+
+```{r, warning=FALSE}
+nrounds <- seq(50, 150, by = 50)
+max_depth <- seq(2, 3, by = 1)
+eta <- seq(0, 0.1, by = 0.05)
+gamma <- seq(0, 1, by = 0.5)
+colsample_bytree <- seq(0.5, 1, by = 0.5)
+min_child_weight <- seq(10, 12, by = 1)
+subsample <- seq(0.8, 1, by = 0.1)
+
+XGB <- train(points_per_game ~ points_pg_ly + targets_pg_ly + wopr_pg_ly + pick + air_yards_pg_ly +
+               total_games_ly  + pass_attempt_difference  + total_positional_investment +
+               target_dropoff + epa_pg_ly + years_pro + targets_added_this_year + is_on_new_team +
+               points_per_snap_ly + targets_per_snap_ly + wopr_per_snap_ly + total_snaps_ly  +
+               total_passing_tds_ly + total_passing_yds_ly + total_passing_fp_ly + 
+               is_returning_coach + hc_years_with_team + catch_rate_ly + position + fp_dropoff +
+               starter_epa_passing_ly + starter_epa_persnap_passing_ly + combine_cluster +
+               qbr_ly_bin,
+             data=train,
+             method="xgbTree",
+             tuneGrid=expand.grid(nrounds = nrounds,
+                                  max_depth = max_depth,
+                                  eta = eta,
+                                  gamma = gamma,
+                                  colsample_bytree = colsample_bytree,
+                                  min_child_weight = min_child_weight,
+                                  subsample = subsample),
+             metric="RMSE",
+             verbose=FALSE,
+             trControl=ctrl)
+
+test$prediction_XGB <- predict(XGB, newdata = test)
+test$dif_XGB <- test$points_per_game - test$prediction_XGB
+
+XGB$results[rownames(XGB$bestTune),c(8,11)]
+
+# Test RMSE
+sqrt(mean((test$dif_XGB)^2))
+```
+
+Random Forest 
+
+```{r}
+mtry <- seq(2, 10, by=1)  
+
+RF <- train(points_per_game ~ points_pg_ly + targets_pg_ly + wopr_pg_ly + pick + air_yards_pg_ly +
+               total_games_ly  + pass_attempt_difference  + total_positional_investment +
+               target_dropoff + epa_pg_ly + years_pro + targets_added_this_year + is_on_new_team +
+               points_per_snap_ly + targets_per_snap_ly + wopr_per_snap_ly + total_snaps_ly  +
+               total_passing_tds_ly + total_passing_yds_ly + total_passing_fp_ly + 
+               is_returning_coach + hc_years_with_team + catch_rate_ly + position + fp_dropoff +
+               starter_epa_passing_ly + starter_epa_persnap_passing_ly + combine_cluster +
+               qbr_ly_bin,
+             data = train,
+             method = "rf",
+             tuneGrid = expand.grid(mtry = mtry),
+             metric = "RMSE",
+             verbose = FALSE,
+             trControl = ctrl)
+
+test$prediction_RF <- predict(RF, newdata = test)
+test$dif_RF <- test$points_per_game - test$prediction_RF
+
+RF$results[rownames(RF$bestTune),c(2,5)]
+
+# Test RMSE
+sqrt(mean((test$dif_RF)^2))
+```
+
+Neural Net 
+
+```{r}
+size <- seq(1, 5, by = 1)  
+decay <- c(0.1,0.01,0.001,0.0001)
+
+NNET <- train(points_per_game ~ points_pg_ly + targets_pg_ly + wopr_pg_ly + pick + air_yards_pg_ly +
+               total_games_ly  + pass_attempt_difference  + total_positional_investment +
+               target_dropoff + epa_pg_ly + years_pro + targets_added_this_year + is_on_new_team +
+               points_per_snap_ly + targets_per_snap_ly + wopr_per_snap_ly + total_snaps_ly  +
+               total_passing_tds_ly + total_passing_yds_ly + total_passing_fp_ly + 
+               is_returning_coach + hc_years_with_team + catch_rate_ly + position + fp_dropoff +
+               starter_epa_passing_ly + starter_epa_persnap_passing_ly + combine_cluster +
+               qbr_ly_bin,
+             data = train,
+             method = "nnet",
+             tuneGrid = expand.grid(size = size,
+                                    decay = decay),
+             metric = "RMSE",
+             trace = FALSE,
+             trControl = ctrl)
+
+test$prediction_NNET <- predict(NNET, newdata = test)
+test$dif_NNET <- test$points_per_game - test$prediction_NNET
+
+NNET$results[rownames(NNET$bestTune),c(3,6)]
+
+# Test RMSE
+sqrt(mean((test$dif_NNET)^2))
+```
+
+GLM
+
+```{r}
+alpha <- seq(0,1,by=0.1)
+lambda <- seq(-3,0,by=0.5)
+
+GLM <- train(points_per_game ~ points_pg_ly + targets_pg_ly + 
+               wopr_pg_ly + pick + air_yards_pg_ly + total_games_ly + 
+               pass_attempt_difference  + total_positional_investment +
+               target_dropoff + epa_pg_ly + years_pro + targets_added_this_year + 
+               is_on_new_team + points_per_snap_ly + targets_per_snap_ly + 
+               wopr_per_snap_ly + total_snaps_ly  + total_passing_tds_ly + 
+               total_passing_yds_ly + total_passing_fp_ly + is_returning_coach + 
+               hc_years_with_team + catch_rate_ly + position + fp_dropoff + 
+               starter_epa_passing_ly + starter_epa_persnap_passing_ly + 
+               combine_cluster + qbr_ly_bin,
+             data=train,
+             method="glmnet",
+             tuneGrid=expand.grid(alpha = alpha, 
+                                  lambda = lambda),
+             metric="RMSE",
+             verbose=FALSE,
+             trControl=ctrl)
+
+test$prediction_GLM <- predict(GLM, newdata = test)
+test$dif_GLM <- test$points_per_game - test$prediction_GLM
+
+GLM$results[rownames(GLM$bestTune),c(3,6)]
+
+# Test RMSE
+sqrt(mean((test$dif_GLM)^2))
+```
+
+Final Table
+
+```{r}
+GBM_train <- GBM$results[rownames(GBM$bestTune),5]
+GBM_sd <- GBM$results[rownames(GBM$bestTune),8]
+GBM_test <- sqrt(mean((test$dif_GBM)^2))
+
+XGB_train <- XGB$results[rownames(XGB$bestTune),8]
+XGB_sd <- XGB$results[rownames(XGB$bestTune),11]
+XGB_test <- sqrt(mean((test$dif_XGB)^2))
+
+RF_train <- RF$results[rownames(RF$bestTune),2]
+RF_sd <- RF$results[rownames(RF$bestTune),5]
+RF_test <- sqrt(mean((test$dif_RF)^2))
+
+NNET_train <- NNET$results[rownames(NNET$bestTune),3]
+NNET_sd <- NNET$results[rownames(NNET$bestTune),6]
+NNET_test <- sqrt(mean((test$dif_NNET)^2))
+
+GLM_train <- GLM$results[rownames(GLM$bestTune),3]
+GLM_sd <- GLM$results[rownames(GLM$bestTune),6]
+GLM_test <- sqrt(mean((test$dif_GLM)^2))
+
+
+summary_table <- data.frame(
+  "Model" = c("GBM","XGB","Random Forest","Neural Net","GLM"),
+  "Train_RMSE" = c(GBM_train, XGB_train, RF_train, NNET_train, GLM_train),
+  "RMSE_SD" = c(GBM_sd, XGB_sd, RF_sd, NNET_sd, GLM_sd),
+  "Test_RMSE" = c(GBM_test, XGB_test, RF_test, NNET_test, GLM_test)
+)
+
+summary_table_sorted <- summary_table %>%
+  arrange(Train_RMSE)
+
+kable(summary_table_sorted)
+```
+
