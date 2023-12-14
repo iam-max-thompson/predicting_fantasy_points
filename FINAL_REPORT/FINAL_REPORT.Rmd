@@ -24,9 +24,8 @@ library(groupdata2)
 library(ggplot2)
 library(knitr)
 
-MASTER<- read.csv("C:/Users/jaret/OneDrive/MSBA - Fall 2023/BZAN 542 - Data Mining/predicting_fantasy_points/MASTER.csv")
-Y2023<- read.csv("C:/Users/jaret/OneDrive/MSBA - Fall 2023/BZAN 542 - Data Mining/predicting_fantasy_points/2023_data.csv")
-ESPN<- read.csv("C:/Users/jaret/OneDrive/MSBA - Fall 2023/BZAN 542 - Data Mining/predicting_fantasy_points/espn_2023.csv")
+load("C:/Users/jaret/OneDrive/MSBA - Fall 2023/BZAN 542 - Data Mining/predicting_fantasy_points/Model Testing/All_models_workspace.RData")
+
 set.seed(2023)
 ```
 
@@ -36,7 +35,7 @@ set.seed(2023)
 
 ## Results:
    
-Our model was able to better predict player performance compared to an industry standard, ESPN. We chose X model that beat ESPN's RMSE by XX. This represents a XX% beat of ESPN's model.
+Our model was able to better predict player performance compared to an industry standard, ESPN. We chose GBM model with an RMSE 3.14 points per game that beat ESPN's RMSE of 3.65 points per game. This represents a 14% beat of ESPN's model.
 
 ## Motivation:
    
@@ -48,20 +47,24 @@ With this fairly new industry rapidly growing, our goal is to gain a competitive
 
 ## Conclusion:
    
-In summary, our model outperforms ESPN estimates of player performance by XX%. In doing so, we are positioned to provide services to a large audience as higher accuracy predictions have real monetary implications to both die-hard and recreational consumers. 
+In summary, our model outperforms ESPN estimates of player performance by 14%. In doing so, we are positioned to provide services to a large audience as higher accuracy predictions have real monetary implications to both die-hard and recreational consumers. 
 
-```{r Hardcoding Results to be Shown at the beginning, echo = FALSE}
-Results<- data.frame(matrix(nrow=0, ncol=3))
-colnames(Results)<- c("Model", "RMSE", "RMSE St. Dev.")
-Results[1,]<- c("GLMNet", 3.181, 0.0234)
-# Results[2,]<- c(Model Name, RMSE, RMSESD)
-# Results[2,]<- c(Model Name, RMSE, RMSESD)
-# Results[2,]<- c(Model Name, RMSE, RMSESD)
+The following table shows our results for the different models tested. 
 
-kable(Results)
+```{r, echo=FALSE}
+kable(summary_table)
 ```
 
-\pagebreak
+We selected the GBM model because it outperforms the simpler regularized regression model and had the best test RMSE based on our results. The following table shows the outputs for our final model after re-training our best model with all available data (seasons 2022 and before). The current season RMSE is how we are doing so far in the 2023 season using this model. 
+
+```{r, echo=FALSE}
+kable(results_table)
+```
+```{r, echo=FALSE}
+kable(head(varImp(GBM_FULL)$importance, 5)[1])
+```
+
+*Note: These are the top 5 variables listed in order of importance.*
 
 # The Data
 
@@ -144,27 +147,9 @@ kable(df, caption = "Fields used for Models")
 
 # Models
 
-## Data Setup
-
-```{r, message=FALSE, echo=FALSE, error = TRUE}
-# You'll have to change this to get it to run on your computer
-
-master <- read.csv("C:/Users/jaret/OneDrive/MSBA - Fall 2023/BZAN 542 - Data Mining/predicting_fantasy_points/MASTER.csv")
-current_season <- read.csv("C:/Users/jaret/OneDrive/MSBA - Fall 2023/BZAN 542 - Data Mining/predicting_fantasy_points/2023_data.csv")
-```
-
-```{r, error = TRUE}
-master <- filter(master, season >= 2014)
-master$pick <- cut(master$pick,breaks = seq(0,400,by=32))
-master$pick <- ifelse(master$pick == "(288,320]","Undrafted",master$pick)
-
-current_season$pick <- cut(current_season$pick,breaks = seq(0,400,by=32))
-current_season$pick <- ifelse(current_season$pick == "(288,320]","Undrafted",current_season$pick)
-```
-
 ## Train, Test, CV
 
-```{r, error = TRUE}
+```{r, eval=FALSE}
 set.seed(2023)
 train_rows <- sample(nrow(master),round(nrow(master)*0.7,1),replace = FALSE)
 
@@ -176,83 +161,76 @@ ctrl <- trainControl(method = "cv", number = 5)
 
 This sets up train and holdout (or test) data sets to train models on. By using train and holdout data sets, we can ensure that our model is not over-fitting to the training data and examine how well the model generalizes to new data. 
 
+## XGBOOST Model
+
+### What XGBOOST models are and how they work:
+
+XGBoost, short for Extreme Gradient Boosting, is an optimized and powerful implementation of the gradient boosting algorithm. It's widely used in machine learning for regression, classification, and ranking tasks due to its efficiency, speed, and high performance. It operates by building an ensemble of weak learners, commonly decision trees, to progressively minimize prediction errors. It showcases optimized tree construction methods, parallel processing, and regularization techniques like L1 and L2 regularization to prevent overfitting. XGBoost handles missing values, provides feature importance, and is known for its speed, scalability, and high performance in handling large datasets.
+
+The tuned hyper-parameters and output results are show below:
+
+```{r, echo=FALSE, error = TRUE}
+kable(XGB$bestTune)
+kable(summary_table[1,])
+```
+
+
+
+## GBM Model
+
+### What GBM models are and how they work:
+
+GBM stands for Gradient Boosting Machine, it’s a machine learning technique used for both regression and classification problems. It also happens to be an ensemble learning method just like Random Forests, but it operates differently. GBM’s work by sequentially building multiple decision trees, each one correcting the errors made by the previous tree. It uses gradient descent optimization to minimize the overall error by fitting new trees to the residuals of the previous predictions. This process continues until the model converges, combining the predictions of these trees to make the final prediction. GBM excels in capturing complex relationships but requires hyperparameter tuning to prevent overfitting.
+
+The tuned hyper-parameters and output results are show below:
+
+```{r, echo=FALSE, error = TRUE}
+kable(GBM$bestTune)
+kable(summary_table[2,])
+```
+
+
+
+## Random Forest Model 
+
+### What Random Forest models are and how they work:
+
+Random Forest is a versatile machine learning algorithm used for both classification and regression tasks. It’s an ensemble learning method combining multiple models to make more accurate predictions compared to a single model. It constructs multiple decision trees using random subsets of the data and features. It combines these trees to make predictions by averaging for regression. By leveraging the diversity of these trees and their collective decision-making, Random Forest reduces overfitting, handles large datasets well, and provides insights into feature importance.
+
+The tuned hyper-parameters and output results are show below:
+
+```{r, echo=FALSE, error = TRUE}
+kable(GBM$bestTune)
+kable(summary_table[3,])
+```
+
+
+
 ## GLMNet Model
 
 ### What GLMNet models are and how they work:
 
 GLMNet models use regularized regression to control the complexity of the model and prevent over fitting. These models are particularly useful for high-dimensional data sets where the number of predictors is large relative to the number of observations. The models use traditional linear regression in addition to penalty terms, alpha and lambda, to perform variable selection and handle correlated predictors. The tuning parameter,  lambda, controls the strength of regularization, with larger lambda values leading to simpler models. Similarly, larger alpha levels emphasizes lasso regression which also leads to simpler models. 
 
-```{r, echo=FALSE, error = TRUE}
-alpha <- seq(0,1,by=0.1)
-lambda <- seq(-3,0,by=0.5)
+Optimal alpha and lambda levels were found using 5-fold cross-validation. We found the optimal tuning parameters shown below. Essentially, these are the tuning parameters that minimized the RMSE of the model. 
 
-set.seed(2023); GLM <- train(points_per_game ~ points_pg_ly + targets_pg_ly + 
-                         wopr_pg_ly + pick + air_yards_pg_ly + total_games_ly + 
-                         pass_attempt_difference  + total_positional_investment +
-                         target_dropoff + epa_pg_ly + years_pro + targets_added_this_year + 
-                         is_on_new_team + points_per_snap_ly + targets_per_snap_ly + 
-                         wopr_per_snap_ly + total_snaps_ly  + total_passing_tds_ly + 
-                         total_passing_yds_ly + total_passing_fp_ly + is_returning_coach + 
-                         hc_years_with_team + catch_rate_ly + position + fp_dropoff + 
-                         starter_epa_passing_ly + starter_epa_persnap_passing_ly + 
-                         combine_cluster + qbr_ly_bin,
-                       data=train,
-                       method="glmnet",
-                       tuneGrid=expand.grid(alpha = alpha, lambda = lambda),
-                       metric="RMSE",
-                       verbose=FALSE,
-                       trControl=ctrl)
-```
-
-Optimal alpha and lambda levels were found using 5-fold cross-validation. We found the optimal tuning parameters shown below. Essentially, these are the tuning parameters that minimized the RMSE of the model. Given these parameters in our model, the RMSE on the training data set, testing data set, and for 2023 data are shown below:
-
-```{r, error = TRUE}
-GLM$results[rownames(GLM$bestTune),c(1:3,6)]
-# Train RMSE
-TrainResults<- round(postResample(predict(GLM, newdata = train), train$points_per_game)[1], 3)
-# Test RMSE
-TestResults<- round(postResample(predict(GLM, newdata = test), test$points_per_game)[1], 3)
-# 2023 RMSE
-Y2023Results<- round(postResample(predict(GLM, newdata = current_season)
-                                  , current_season$points_per_game)[1], 3)
-```
-```{r, echo=FALSE, error = TRUE}
-kable(rbind(TrainResults, TestResults, Y2023Results))
-```
-
-
+The tuned hyper-parameters and output results are show below:
 
 ```{r, echo=FALSE, error = TRUE}
-set.seed(2023); GLM_FULL <- train(points_per_game ~ points_pg_ly + targets_pg_ly +
-                              wopr_pg_ly + pick + air_yards_pg_ly + total_games_ly + 
-                              pass_attempt_difference  + total_positional_investment + 
-                              target_dropoff + epa_pg_ly + years_pro + targets_added_this_year + 
-                              is_on_new_team + points_per_snap_ly + targets_per_snap_ly + 
-                              wopr_per_snap_ly + total_snaps_ly  + total_passing_tds_ly + 
-                              total_passing_yds_ly + total_passing_fp_ly + is_returning_coach + 
-                              hc_years_with_team + catch_rate_ly + position + fp_dropoff + 
-                              starter_epa_passing_ly + starter_epa_persnap_passing_ly + 
-                              combine_cluster + qbr_ly_bin,
-                           data=master,
-                           method="glmnet",
-                           tuneGrid=expand.grid(GLM$bestTune),
-                           metric="RMSE",
-                           verbose=FALSE,
-                           trControl=ctrl)
+kable(GLM$bestTune)
+kable(summary_table[4,])
 ```
 
-Now that we had established the optimal parameters, we would re-train the model on all available data except for 2023 data. Using the optimal tuning parameters and training on the full data set, we saw improved performance in both the test data set and the 2023 data set.
 
-```{r, error = TRUE}
-GLM_FULL$results[rownames(GLM_FULL$bestTune),c(1:3,6)]
-# Master RMSE
-MasterResults<- round(postResample(predict(GLM_FULL, newdata = master), master$points_per_game)[1], 3)
-# 2023 RMSE
-Y2023Results<- round(postResample(predict(GLM_FULL, newdata = current_season)
-                                  , current_season$points_per_game)[1], 3)
-```
-```{r, echo=FALSE}
-kable(rbind(MasterResults, Y2023Results))
+## Neural Net Model
+
+What Neural Net models are and how they work:
+
+Neural network models, often referred to as artificial neural networks (ANNs), are a class of machine learning models inspired by the structure and functioning of the human brain's neural networks. It consists of interconnected nodes organized in layers. They process data through these layers, adjusting connection weights iteratively during training to make accurate predictions. Using activation functions and backpropagation, neural networks learn patterns and relationships within data, enabling them to handle complex tasks such as image recognition, language processing, and more.
+
+```{r, echo=FALSE, error = TRUE}
+kable(NNET$bestTune)
+kable(summary_table[5,])
 ```
 
 \pagebreak
@@ -260,7 +238,7 @@ kable(rbind(MasterResults, Y2023Results))
 # Appendix:
 
 ## Libraries Used
-```{r, message=FALSE}
+```{r, message=FALSE, eval=FALSE}
 library(dplyr)
 library(xgboost)
 library(DALEX)
@@ -277,49 +255,177 @@ library(ggplot2)
 library(knitr)
 ```
 
-## Code to Produce GLMNet Model
+## Code to Produce the Final GBM Model
 
-This code allowed us to choose the best levels for alpha and lambda, which are the two parameters for regualarized regression:
+```{r, eval=FALSE}
+GBM_FULL <- train(points_per_game ~ points_pg_ly + targets_pg_ly + wopr_pg_ly + 
+                    pick + air_yards_pg_ly + total_games_ly  + 
+                    pass_attempt_difference  + total_positional_investment + 
+                    target_dropoff + epa_pg_ly + years_pro + 
+                    targets_added_this_year + is_on_new_team + 
+                    points_per_snap_ly + targets_per_snap_ly + wopr_per_snap_ly 
+                    + total_snaps_ly  + total_passing_tds_ly + 
+                    total_passing_yds_ly + total_passing_fp_ly + 
+                    is_returning_coach + hc_years_with_team + catch_rate_ly + 
+                    position + fp_dropoff + starter_epa_passing_ly + 
+                    starter_epa_persnap_passing_ly + combine_cluster + 
+                    qbr_ly_bin,
+             data=train,
+             method="gbm",
+             tuneGrid=expand.grid(n.trees = 150, 
+                                   interaction.depth = 7, 
+                                   n.minobsinnode = 9, 
+                                   shrinkage = 0.03),
+             metric="RMSE",
+             verbose=FALSE,
+             trControl=ctrl)
+```
+
+## Code to Produce XGBOOST Model
+
+```{r, eval=FALSE}
+nrounds <- seq(50, 150, by = 50)
+max_depth <- seq(2, 3, by = 1)
+eta <- seq(0, 0.1, by = 0.05)
+gamma <- seq(0, 1, by = 0.5)
+colsample_bytree <- seq(0.5, 1, by = 0.5)
+min_child_weight <- seq(10, 12, by = 1)
+subsample <- seq(0.8, 1, by = 0.1)
+
+XGB <- train(points_per_game ~ points_pg_ly + targets_pg_ly + wopr_pg_ly + 
+                    pick + air_yards_pg_ly + total_games_ly  + 
+                    pass_attempt_difference  + total_positional_investment + 
+                    target_dropoff + epa_pg_ly + years_pro + 
+                    targets_added_this_year + is_on_new_team + 
+                    points_per_snap_ly + targets_per_snap_ly + wopr_per_snap_ly 
+                    + total_snaps_ly  + total_passing_tds_ly + 
+                    total_passing_yds_ly + total_passing_fp_ly + 
+                    is_returning_coach + hc_years_with_team + catch_rate_ly + 
+                    position + fp_dropoff + starter_epa_passing_ly + 
+                    starter_epa_persnap_passing_ly + combine_cluster + 
+                    qbr_ly_bin,
+             data=train,
+             method="xgbTree",
+             tuneGrid=expand.grid(nrounds = nrounds,
+                                  max_depth = max_depth,
+                                  eta = eta,
+                                  gamma = gamma,
+                                  colsample_bytree = colsample_bytree,
+                                  min_child_weight = min_child_weight,
+                                  subsample = subsample),
+             metric="RMSE",
+             verbose=FALSE,
+             trControl=ctrl)
+```
+
+## Code to Produce Orignal GBM Model for Model Comparison
+
+```{r, eval=FALSE}
+trees <- seq(from=50,to=150,by=50)
+interaction_d <- seq(from=5,to=7,by=1)
+minobsinnode <- seq(from=8,to=10,by=1)
+shrinkgage <- seq(from=0.03,to=0.05,by=0.01)
+
+
+GBM <- train(points_per_game ~ points_pg_ly + targets_pg_ly + wopr_pg_ly + 
+                    pick + air_yards_pg_ly + total_games_ly  + 
+                    pass_attempt_difference  + total_positional_investment + 
+                    target_dropoff + epa_pg_ly + years_pro + 
+                    targets_added_this_year + is_on_new_team + 
+                    points_per_snap_ly + targets_per_snap_ly + wopr_per_snap_ly 
+                    + total_snaps_ly  + total_passing_tds_ly + 
+                    total_passing_yds_ly + total_passing_fp_ly + 
+                    is_returning_coach + hc_years_with_team + catch_rate_ly + 
+                    position + fp_dropoff + starter_epa_passing_ly + 
+                    starter_epa_persnap_passing_ly + combine_cluster + 
+                    qbr_ly_bin,
+             data=train,
+             method="gbm",
+             tuneGrid=expand.grid(n.trees = trees, 
+                                   interaction.depth = interaction_d, 
+                                   n.minobsinnode = minobsinnode, 
+                                   shrinkage = shrinkgage),
+             metric="RMSE",
+             verbose=FALSE,
+             trControl=ctrl)
+```
+
+## Code to Product Random Forest Model
+
+```{r, eval=FALSE}
+mtry <- seq(2, 10, by=1)  
+
+RF <- train(points_per_game ~ points_pg_ly + targets_pg_ly + wopr_pg_ly + 
+                    pick + air_yards_pg_ly + total_games_ly  + 
+                    pass_attempt_difference  + total_positional_investment + 
+                    target_dropoff + epa_pg_ly + years_pro + 
+                    targets_added_this_year + is_on_new_team + 
+                    points_per_snap_ly + targets_per_snap_ly + wopr_per_snap_ly 
+                    + total_snaps_ly  + total_passing_tds_ly + 
+                    total_passing_yds_ly + total_passing_fp_ly + 
+                    is_returning_coach + hc_years_with_team + catch_rate_ly + 
+                    position + fp_dropoff + starter_epa_passing_ly + 
+                    starter_epa_persnap_passing_ly + combine_cluster + 
+                    qbr_ly_bin,
+             data = train,
+             method = "rf",
+             tuneGrid = expand.grid(mtry = mtry),
+             metric = "RMSE",
+             verbose = FALSE,
+             trControl = ctrl)
+```
+
+## Code to Produce GLMNet Model
 
 ```{r, eval=FALSE}
 alpha <- seq(0,1,by=0.1)
 lambda <- seq(-3,0,by=0.5)
 
-set.seed(2023); GLM <- train(points_per_game ~ points_pg_ly + targets_pg_ly + 
-                         wopr_pg_ly + pick + air_yards_pg_ly + total_games_ly + 
-                         pass_attempt_difference  + total_positional_investment +
-                         target_dropoff + epa_pg_ly + years_pro + targets_added_this_year + 
-                         is_on_new_team + points_per_snap_ly + targets_per_snap_ly + 
-                         wopr_per_snap_ly + total_snaps_ly  + total_passing_tds_ly + 
-                         total_passing_yds_ly + total_passing_fp_ly + is_returning_coach + 
-                         hc_years_with_team + catch_rate_ly + position + fp_dropoff + 
-                         starter_epa_passing_ly + starter_epa_persnap_passing_ly + 
-                         combine_cluster + qbr_ly_bin,
-                       data=train,
-                       method="glmnet",
-                       tuneGrid=expand.grid(alpha = alpha, lambda = lambda),
-                       metric="RMSE",
-                       verbose=FALSE,
-                       trControl=ctrl)
+GLM <- train(points_per_game ~ points_pg_ly + targets_pg_ly + wopr_pg_ly + 
+                    pick + air_yards_pg_ly + total_games_ly  + 
+                    pass_attempt_difference  + total_positional_investment + 
+                    target_dropoff + epa_pg_ly + years_pro + 
+                    targets_added_this_year + is_on_new_team + 
+                    points_per_snap_ly + targets_per_snap_ly + wopr_per_snap_ly 
+                    + total_snaps_ly  + total_passing_tds_ly + 
+                    total_passing_yds_ly + total_passing_fp_ly + 
+                    is_returning_coach + hc_years_with_team + catch_rate_ly + 
+                    position + fp_dropoff + starter_epa_passing_ly + 
+                    starter_epa_persnap_passing_ly + combine_cluster + 
+                    qbr_ly_bin,
+             data=train,
+             method="glmnet",
+             tuneGrid=expand.grid(alpha = alpha, 
+                                  lambda = lambda),
+             metric="RMSE",
+             verbose=FALSE,
+             trControl=ctrl)
 ```
 
-After identifying the ideal levels for alpha and lambda via cross-validation, we re-tuned the model to find the ideal coefficients. The new model seen below was tested on all historical data, as well as 2023 data.
+## Code to Produce NNET Model
 
 ```{r, eval=FALSE}
-set.seed(2023); GLM_FULL <- train(points_per_game ~ points_pg_ly + targets_pg_ly +
-                              wopr_pg_ly + pick + air_yards_pg_ly + total_games_ly + 
-                              pass_attempt_difference  + total_positional_investment + 
-                              target_dropoff + epa_pg_ly + years_pro + targets_added_this_year + 
-                              is_on_new_team + points_per_snap_ly + targets_per_snap_ly + 
-                              wopr_per_snap_ly + total_snaps_ly  + total_passing_tds_ly + 
-                              total_passing_yds_ly + total_passing_fp_ly + is_returning_coach + 
-                              hc_years_with_team + catch_rate_ly + position + fp_dropoff + 
-                              starter_epa_passing_ly + starter_epa_persnap_passing_ly + 
-                              combine_cluster + qbr_ly_bin,
-                           data=master,
-                           method="glmnet",
-                           tuneGrid=expand.grid(GLM$bestTune),
-                           metric="RMSE",
-                           verbose=FALSE,
-                           trControl=ctrl)
+size <- seq(1, 5, by = 1)  
+decay <- c(0.1,0.01,0.001,0.0001)
+
+NNET <- train(points_per_game ~ points_pg_ly + targets_pg_ly + wopr_pg_ly + 
+                    pick + air_yards_pg_ly + total_games_ly  + 
+                    pass_attempt_difference  + total_positional_investment + 
+                    target_dropoff + epa_pg_ly + years_pro + 
+                    targets_added_this_year + is_on_new_team + 
+                    points_per_snap_ly + targets_per_snap_ly + wopr_per_snap_ly 
+                    + total_snaps_ly  + total_passing_tds_ly + 
+                    total_passing_yds_ly + total_passing_fp_ly + 
+                    is_returning_coach + hc_years_with_team + catch_rate_ly + 
+                    position + fp_dropoff + starter_epa_passing_ly + 
+                    starter_epa_persnap_passing_ly + combine_cluster + 
+                    qbr_ly_bin,
+             data = train,
+             method = "nnet",
+             tuneGrid = expand.grid(size = size,
+                                    decay = decay),
+             metric = "RMSE",
+             trace = FALSE,
+             trControl = ctrl)
 ```
+
