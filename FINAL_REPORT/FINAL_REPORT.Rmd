@@ -207,7 +207,7 @@ set.seed(2023); GLM <- train(points_per_game ~ points_pg_ly + targets_pg_ly +
 Optimal alpha and lambda levels were found using 5-fold cross-validation. We found the optimal tuning parameters shown below. Essentially, these are the tuning parameters that minimized the RMSE of the model. Given these parameters in our model, the RMSE on the training data set, testing data set, and for 2023 data are shown below:
 
 ```{r, error = TRUE}
-GLM$bestTune
+GLM$results[rownames(GLM$bestTune),c(1:3,6)]
 # Train RMSE
 TrainResults<- round(postResample(predict(GLM, newdata = train), train$points_per_game)[1], 3)
 # Test RMSE
