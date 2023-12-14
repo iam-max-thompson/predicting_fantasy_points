@@ -237,9 +237,52 @@ summary_table <- data.frame(
   "Test_RMSE" = c(GBM_test, XGB_test, RF_test, NNET_test, GLM_test)
 )
 
-summary_table_sorted <- summary_table %>%
+summary_table <- summary_table %>%
   arrange(Train_RMSE)
 
-kable(summary_table_sorted)
+kable(summary_table)
+```
+
+FINAL GBM
+
+```{r}
+GBM_FULL <- train(points_per_game ~ points_pg_ly + targets_pg_ly + wopr_pg_ly + pick + air_yards_pg_ly +
+               total_games_ly  + pass_attempt_difference  + total_positional_investment +
+               target_dropoff + epa_pg_ly + years_pro + targets_added_this_year + is_on_new_team +
+               points_per_snap_ly + targets_per_snap_ly + wopr_per_snap_ly + total_snaps_ly  +
+               total_passing_tds_ly + total_passing_yds_ly + total_passing_fp_ly + 
+               is_returning_coach + hc_years_with_team + catch_rate_ly + position + fp_dropoff +
+               starter_epa_passing_ly + starter_epa_persnap_passing_ly + combine_cluster +
+               qbr_ly_bin,
+             data=train,
+             method="gbm",
+             tuneGrid=expand.grid(n.trees = 150, 
+                                   interaction.depth = 7, 
+                                   n.minobsinnode = 9, 
+                                   shrinkage = 0.03),
+             metric="RMSE",
+             verbose=FALSE,
+             trControl=ctrl)
+
+
+current_season$prediction_GBM <- predict(GBM_FULL, newdata = current_season)
+current_season$dif_GBM <- current_season$points_per_game - current_season$prediction_GBM
+
+GBM$results[rownames(GBM_FULL$bestTune),c(5,8)]
+```
+
+```{r}
+train_full <- GBM$results[rownames(GBM_FULL$bestTune),5]
+sd_full <- GBM$results[rownames(GBM_FULL$bestTune),8]
+current_season <- sqrt(mean((test$dif_GBM)^2))
+
+results_table <- data.frame(
+  "Model" = "GBM",
+  "Train_RMSE" = train_full,
+  "RMSE_SD" = sd_full,
+  "Current_Season_RMSE" = current_season
+)
+
+kable(results_table)
 ```
 
