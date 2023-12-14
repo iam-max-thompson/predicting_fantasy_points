@@ -274,7 +274,7 @@ GBM$results[rownames(GBM_FULL$bestTune),c(5,8)]
 ```{r}
 train_full <- GBM$results[rownames(GBM_FULL$bestTune),5]
 sd_full <- GBM$results[rownames(GBM_FULL$bestTune),8]
-current_season <- sqrt(mean((test$dif_GBM)^2))
+current_season <- sqrt(mean((current_season$dif_GBM)^2))
 
 results_table <- data.frame(
   "Model" = "GBM",
